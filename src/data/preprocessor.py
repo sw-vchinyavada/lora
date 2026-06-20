@@ -78,10 +78,18 @@ class DataPreprocessor:
         
         X[self.numerical_features] = X_num
         
-        # Final feature matrix (numerical only for models)
-        X_final = X[self.numerical_features].values.astype(np.float32)
+        # Numerical + encoded categorical columns feed all models
+        X_final = self._feature_matrix(X)
         
         return X_final, y, df
+    
+    def _feature_matrix(self, X: pd.DataFrame) -> np.ndarray:
+        """Stack scaled numerical features and encoded categoricals."""
+        parts = [X[self.numerical_features].values.astype(np.float32)]
+        if self.categorical_features:
+            cat = X[self.categorical_features].astype(np.float32).values
+            parts.append(cat)
+        return np.hstack(parts).astype(np.float32)
     
     def transform(self, df: pd.DataFrame) -> np.ndarray:
         """Transform new data."""
@@ -94,13 +102,16 @@ class DataPreprocessor:
                 unknown = set(X[col]) - set(le.classes_)
                 for u in unknown:
                     X.loc[X[col] == u, col] = "missing"
+                if "missing" not in le.classes_:
+                    X.loc[~X[col].isin(le.classes_), col] = le.classes_[0]
                 X[col] = le.transform(X[col])
         
         X_num = X[self.numerical_features].values
         X_num = self.imputer.transform(X_num)
         X_num = self.scaler.transform(X_num)
+        X[self.numerical_features] = X_num
         
-        return X_num.astype(np.float32)
+        return self._feature_matrix(X)
     
     def split(
         self,

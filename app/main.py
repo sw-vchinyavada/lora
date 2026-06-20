@@ -40,12 +40,28 @@ h1 { font-size: 2rem !important; letter-spacing: -0.02em !important; }
 .metric-card { background: linear-gradient(145deg, #f8fafc, #f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #0ea5e9; margin: 0.5rem 0; }
 .metric-card .val { font-size: 1.5rem; font-weight: 700; color: #0f172a; }
 .metric-card .lbl { font-size: 0.8rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+.demo-step { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: #64748b; margin: 0 0 0.35rem; }
+.profile-card {
+  background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; padding: 1.25rem 1.5rem;
+  box-shadow: 0 1px 3px rgba(15,23,42,0.06);
+}
+.profile-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #f1f5f9; }
+.profile-header h3 { margin: 0; font-size: 1.15rem; color: #0f172a; }
+.profile-badge { display: inline-block; background: #e0f2fe; color: #0369a1; font-size: 0.75rem; font-weight: 600; padding: 0.2rem 0.55rem; border-radius: 999px; margin-right: 0.35rem; }
+.profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.85rem 1.25rem; }
+.profile-block { background: #f8fafc; border-radius: 10px; padding: 0.85rem 1rem; }
+.profile-block h4 { margin: 0 0 0.55rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; }
+.profile-row { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.9rem; padding: 0.18rem 0; }
+.profile-row span:first-child { color: #64748b; }
+.profile-row span:last-child { color: #0f172a; font-weight: 600; text-align: right; }
+.score-panel { background: linear-gradient(180deg, #f8fafc 0%, #fff 100%); border: 1px dashed #cbd5e1; border-radius: 14px; padding: 1.25rem; margin-top: 0.5rem; }
+.score-panel-empty { color: #64748b; text-align: center; padding: 2rem 1rem; font-size: 0.95rem; }
 """
 
 DEMO_FLOW = """
 **Suggested demo flow for the panel:**
 1. **Overview** → State the problem (89% credit excluded) and LoRA solution
-2. **Live Demo** → Pick a customer, show prediction — *"This MSME applicant gets a score of X"*
+2. **Live Demo** → Filter and pick an applicant, review their profile, then run the credit check
 3. **Results** → Compare models: LoRA vs baselines, highlight parameter efficiency
 4. **Fairness** → Show performance across gender, location — *"Balanced across subgroups"*
 5. **Explainability** → Feature importance — *"Transparent for regulators"*
@@ -53,68 +69,222 @@ DEMO_FLOW = """
 """
 
 
-def load_model_and_prep():
-    models_dir = Path("models")
-    if not (models_dir / "lora" / "best_model.pt").exists():
-        return None, None, None, 0
-    from src.data import load_dataset, DataPreprocessor
-    from src.models import LoRACreditScorer
-
-    prep = DataPreprocessor.load(str(models_dir / "preprocessor.pkl"))
-    lora = LoRACreditScorer.load_pretrained(str(models_dir / "lora" / "best_model.pt"))
-    dataset_name = (models_dir / "dataset_name.txt").read_text().strip() if (models_dir / "dataset_name.txt").exists() else "zimbabwe_synthetic"
-    df = load_dataset(dataset_name)
-    return lora, prep, df, len(df) - 1
+def _load_demo_dataframe() -> pd.DataFrame:
+    """Load applicant dataset once for the Live Demo tab."""
+    dataset_name = "zimbabwe_synthetic"
+    if Path("models/dataset_name.txt").exists():
+        dataset_name = Path("models/dataset_name.txt").read_text().strip()
+    from src.data import load_dataset
+    return load_dataset(dataset_name)
 
 
-def get_applicant_slider_max(default: int = 4999) -> int:
-    """Match slider range to the loaded dataset (training often uses 5K, not 50K)."""
-    out = load_model_and_prep()
-    return out[3] if out[0] is not None else default
+def _fmt(value, suffix="") -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return "—"
+    if isinstance(value, float):
+        return f"{value:.1f}{suffix}" if abs(value) < 1000 else f"{value:,.0f}{suffix}"
+    if isinstance(value, (int, np.integer)):
+        if value in (0, 1) and suffix == "":
+            return "Yes" if value == 1 else "No"
+        return f"{value}{suffix}"
+    text = str(value).strip()
+    return text.replace("_", " ").title() if text else "—"
 
 
-def predict(sample_idx: int):
+def _applicant_choice_label(row: pd.Series, idx: int) -> str:
+    gender = _fmt(row.get("gender"))
+    age = _fmt(row.get("age"))
+    location = _fmt(row.get("location"))
+    msme = "MSME" if row.get("msme") == 1 else "Individual"
+    provider = _fmt(row.get("mm_provider"))
+    return f"Applicant {idx + 1} — {gender}, {age} yrs · {location} · {msme} · {provider}"
+
+
+def _filter_applicant_indices(df: pd.DataFrame, gender: str, location: str, msme: str) -> np.ndarray:
+    mask = pd.Series(True, index=df.index)
+    if gender != "All":
+        mask &= df["gender"].astype(str).str.lower() == gender.lower()
+    if location != "All":
+        mask &= df["location"].astype(str).str.lower() == location.lower()
+    if msme == "MSME":
+        mask &= df["msme"] == 1
+    elif msme == "Non-MSME":
+        mask &= df["msme"] == 0
+    return df.index[mask].to_numpy()
+
+
+def _build_profile_html(row: pd.Series, idx: int) -> str:
+    badges = [
+        _fmt(row.get("gender")),
+        f"{_fmt(row.get('age'))} yrs" if pd.notna(row.get("age")) else None,
+        _fmt(row.get("location")),
+        "MSME" if row.get("msme") == 1 else "Individual",
+        _fmt(row.get("region")) if pd.notna(row.get("region")) else None,
+    ]
+    badge_html = "".join(f'<span class="profile-badge">{b}</span>' for b in badges if b and b != "—")
+
+    def block(title: str, rows: list) -> str:
+        items = "".join(
+            f'<div class="profile-row"><span>{label}</span><span>{value}</span></div>'
+            for label, value in rows
+        )
+        return f'<div class="profile-block"><h4>{title}</h4>{items}</div>'
+
+    sections = [
+        block("Personal", [
+            ("Education", _fmt(row.get("education"))),
+            ("Employment", _fmt(row.get("employment"))),
+            ("Sector", _fmt(row.get("sector"))),
+            ("Household size", _fmt(row.get("household_size"))),
+            ("Youth (≤35)", _fmt(row.get("youth"))),
+        ]),
+        block("Mobile money", [
+            ("Provider", _fmt(row.get("mm_provider"))),
+            ("Transactions / month", _fmt(row.get("mm_txn_per_month"))),
+            ("Avg. transaction", f"${_fmt(row.get('mm_avg_txn_usd'))}"),
+            ("Tenure (months)", _fmt(row.get("mm_tenure_months"))),
+            ("Bill payment ratio", _fmt(row.get("mm_bill_payment_ratio"))),
+        ]),
+        block("Utilities & telecom", [
+            ("Utility payment rate", _fmt(row.get("utility_payment_rate"))),
+            ("Electricity consistency", _fmt(row.get("util_electricity_consistency"))),
+            ("Water consistency", _fmt(row.get("util_water_consistency"))),
+            ("Overdue bills", _fmt(row.get("util_overdue_count"))),
+            ("Airtime consistency", _fmt(row.get("airtime_consistency_score"))),
+        ]),
+        block("Digital & behaviour", [
+            ("Smartphone", _fmt(row.get("has_smartphone"))),
+            ("Digital engagement", _fmt(row.get("digital_engagement"))),
+            ("App sessions / week", _fmt(row.get("app_sessions_per_week"))),
+            ("Account age (months)", _fmt(row.get("account_age_months"))),
+            ("On-time streak", _fmt(row.get("consecutive_on_time"))),
+        ]),
+    ]
+
+    return f"""
+    <div class="profile-card">
+      <div class="profile-header">
+        <div>
+          <h3>Applicant profile</h3>
+          <p style="margin:0.35rem 0 0; color:#64748b; font-size:0.9rem;">Review alternative-data signals before running the credit check.</p>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:0.8rem; color:#64748b;">Record</div>
+          <div style="font-size:1.1rem; font-weight:700; color:#0f172a;">#{idx + 1}</div>
+        </div>
+      </div>
+      <div style="margin-bottom:1rem;">{badge_html}</div>
+      <div class="profile-grid">{''.join(sections)}</div>
+    </div>
+    """
+
+
+def get_applicant_choices(gender: str, location: str, msme: str):
+    """Populate the applicant dropdown from simple filters."""
+    try:
+        df = _load_demo_dataframe()
+    except Exception as e:
+        return gr.Dropdown(choices=[], value=None, label="Select applicant"), f"Could not load dataset: {e}"
+
+    indices = _filter_applicant_indices(df, gender, location, msme)
+    if len(indices) == 0:
+        return gr.Dropdown(choices=[], value=None, label="Select applicant"), (
+            '<div class="profile-card"><p style="margin:0;color:#64748b;">No applicants match these filters. Try broader options.</p></div>'
+        )
+
+    choices = [(_applicant_choice_label(df.loc[i], i), str(i)) for i in indices[:400]]
+    first_id = choices[0][1]
+    profile = _build_profile_html(df.loc[int(first_id)], int(first_id))
+    note = f"Showing {len(choices):,} of {len(indices):,} matching applicants."
+    if len(indices) > 400:
+        note += " Narrow filters to see a shorter list."
+    return gr.Dropdown(choices=choices, value=first_id, label="Select applicant", filterable=True), profile + f'<p style="margin:0.75rem 0 0; color:#64748b; font-size:0.85rem;">{note}</p>'
+
+
+def show_applicant_profile(applicant_id: str):
+    """Load profile only — no model inference yet."""
+    if not applicant_id:
+        return (
+            '<div class="profile-card"><p style="margin:0;color:#64748b;">Choose an applicant from the list above.</p></div>',
+            "Select an applicant to enable scoring.",
+            None,
+            "",
+        )
+    try:
+        df = _load_demo_dataframe()
+        idx = int(applicant_id)
+        row = df.iloc[idx]
+    except Exception:
+        return (
+            '<div class="profile-card"><p style="margin:0;color:#64748b;">Applicant not found.</p></div>',
+            "Select an applicant to enable scoring.",
+            None,
+            "",
+        )
+    return (
+        _build_profile_html(row, idx),
+        "Profile loaded. Click **Check credit score** when ready.",
+        None,
+        "",
+    )
+
+
+def pick_random_applicant(gender: str, location: str, msme: str):
+    """Pick a random applicant from the current filter — useful for panel demos."""
+    try:
+        df = _load_demo_dataframe()
+    except Exception as e:
+        return None, f"Could not load dataset: {e}", "Select an applicant to enable scoring.", None, ""
+
+    indices = _filter_applicant_indices(df, gender, location, msme)
+    if len(indices) == 0:
+        return None, (
+            '<div class="profile-card"><p style="margin:0;color:#64748b;">No applicants match these filters.</p></div>'
+        ), "Select an applicant to enable scoring.", None, ""
+
+    idx = int(np.random.choice(indices))
+    choices = [(_applicant_choice_label(df.loc[i], i), str(i)) for i in indices[:400]]
+    return (
+        gr.Dropdown(choices=choices, value=str(idx), label="Select applicant", filterable=True),
+        _build_profile_html(df.loc[idx], idx),
+        "Profile loaded. Click **Check credit score** when ready.",
+        None,
+        "",
+    )
+
+
+def run_credit_score(applicant_id: str):
+    """Run LoRA inference after the user has reviewed the applicant profile."""
+    if not applicant_id:
+        return "Select an applicant and review their profile first.", None, ""
+
     out = load_model_and_prep()
     if out[0] is None:
         return (
             "⚠️ **Train models first**\n\n```bash\npython scripts/train.py --dataset zimbabwe_synthetic\n```",
             None,
             "",
-            "",
         )
 
-    lora, prep, df, max_idx = out
-    requested_idx = int(sample_idx)
-    sample_idx = min(max(0, requested_idx), max_idx)
+    from src.scoring import score_applicant_row
 
-    # Customer profile preview
-    row = df.iloc[sample_idx]
-    profile_cols = [c for c in ["gender", "age", "location", "employment", "msme", "sector"] if c in df.columns]
-    profile_parts = [f"**Applicant #:** {sample_idx} (of {max_idx:,})"]
-    if requested_idx != sample_idx:
-        profile_parts.append(f"*(slider was {requested_idx:,}; clamped to dataset size)*")
-    for c in profile_cols:
-        v = row.get(c, "")
-        if pd.notna(v):
-            profile_parts.append(f"**{c.replace('_', ' ').title()}:** {v}")
-    profile_html = " · ".join(profile_parts) if profile_parts else f"Applicant #{sample_idx}"
+    try:
+        result = score_applicant_row(int(applicant_id), artifacts=out[:3])
+    except ValueError as e:
+        return f"⚠️ **Model out of date** — retrain to match current features.\n\n`{e}`", None, ""
 
-    cols = [c for c in prep.feature_columns_ if c in df.columns]
-    sample = df[cols].iloc[sample_idx:sample_idx + 1]
-    X = prep.transform(sample)
-    if X.shape[1] != lora.num_features:
-        pad = max(0, lora.num_features - X.shape[1])
-        X = np.pad(X, ((0, 0), (0, pad)), constant_values=0)[:, :lora.num_features]
+    if result is None:
+        return "⚠️ **Could not score applicant.**", None, ""
 
-    proba = lora.predict_proba_numpy(X)[0]
-    score = int(850 - proba * 550)
+    proba = result["default_probability"]
+    score = result["score"]
     risk = "Low ✓" if proba < 0.3 else "Medium" if proba < 0.6 else "High ✗"
     risk_color = "#10b981" if proba < 0.3 else "#f59e0b" if proba < 0.6 else "#ef4444"
 
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=score,
-        title={"text": "Credit Score (0–850)"},
+        title={"text": "Credit Score (300–850)"},
         gauge={
             "axis": {"range": [300, 850], "tickwidth": 1},
             "bar": {"color": "#0ea5e9"},
@@ -130,16 +300,26 @@ def predict(sample_idx: int):
     fig.update_layout(height=260, margin=dict(l=25, r=25, t=50, b=25), paper_bgcolor="rgba(0,0,0,0)", font=dict(family="Inter, system-ui, sans-serif"))
 
     explain = ""
-    fi_path = Path("results/metrics/feature_importance.json")
-    if fi_path.exists():
-        with open(fi_path) as f:
-            data = json.load(f)
-        top = data.get("feature_importance", [])[:4]
-        if top:
-            explain = "**Top risk drivers:** " + " → ".join(f"*{t['feature']}*" for t in top)
+    top = result.get("top_drivers") or []
+    if top:
+        explain = "**Top risk drivers:** " + " → ".join(f"*{t['feature']}*" for t in top[:4])
 
     result_text = f"### {risk}\n**Default probability:** {proba:.1%}  |  **Score:** {score}"
-    return result_text, fig, explain, profile_html
+    return result_text, fig, explain
+
+
+def load_model_and_prep():
+    models_dir = Path("models")
+    if not (models_dir / "lora" / "best_model.pt").exists():
+        return None, None, None, 0
+    from src.data import load_dataset, DataPreprocessor
+    from src.models import LoRACreditScorer
+
+    prep = DataPreprocessor.load(str(models_dir / "preprocessor.pkl"))
+    lora = LoRACreditScorer.load_pretrained(str(models_dir / "lora" / "best_model.pt"))
+    dataset_name = (models_dir / "dataset_name.txt").read_text().strip() if (models_dir / "dataset_name.txt").exists() else "zimbabwe_synthetic"
+    df = load_dataset(dataset_name)
+    return lora, prep, df, len(df) - 1
 
 
 def model_comparison():
@@ -333,20 +513,86 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
             """)
 
         with gr.TabItem("🔮 Live Demo"):
-            gr.Markdown("**Predict credit risk** — Select an applicant and view the LoRA model's score.")
+            gr.Markdown(
+                "Walk through a realistic credit inquiry: **find an applicant → review their profile → run the LoRA score**."
+            )
+
+            gr.Markdown('<p class="demo-step">Step 1 · Find an applicant</p>')
             with gr.Row():
-                idx = gr.Slider(0, get_applicant_slider_max(), 0, step=1, label="Applicant #")
-                pred_btn = gr.Button("Predict", variant="primary", size="lg")
-            profile_out = gr.Markdown("*Select an applicant and click Predict*")
+                filter_gender = gr.Dropdown(
+                    ["All", "Female", "Male"], value="All", label="Gender", scale=1,
+                )
+                filter_location = gr.Dropdown(
+                    ["All", "Urban", "Rural"], value="All", label="Location", scale=1,
+                )
+                filter_msme = gr.Dropdown(
+                    ["All", "MSME", "Non-MSME"], value="All", label="Business type", scale=1,
+                )
+            with gr.Row():
+                applicant_select = gr.Dropdown(
+                    label="Select applicant",
+                    choices=[],
+                    filterable=True,
+                    scale=3,
+                )
+                random_btn = gr.Button("Pick random", scale=1)
+                apply_filters_btn = gr.Button("Apply filters", variant="secondary", scale=1)
+
+            gr.Markdown('<p class="demo-step">Step 2 · Review applicant details</p>')
+            profile_out = gr.HTML(
+                '<div class="profile-card"><p style="margin:0;color:#64748b;">Use the filters above, then choose an applicant to load their profile.</p></div>'
+            )
+
+            gr.Markdown('<p class="demo-step">Step 3 · Run credit check</p>')
+            score_hint = gr.Markdown("*Review the profile first, then run the credit check.*")
             with gr.Row():
                 with gr.Column(scale=1):
+                    score_btn = gr.Button("Check credit score", variant="primary", size="lg")
                     out_text = gr.Markdown()
                     out_explain = gr.Markdown()
                 with gr.Column(scale=1):
                     out_plot = gr.Plot()
-            pred_btn.click(predict, idx, [out_text, out_plot, out_explain, profile_out])
-            # Also show profile - need to add profile_out to outputs. Let me check - we return 4 values, we have 4 outputs. But profile_out - we need to show it. Let me add profile_out as visible output. Actually we're passing profile_out in the outputs - but initially it's empty. The predict returns profile_html as 4th value. We need a component for it. I'll use a Markdown that shows the profile. Let me add it above the results.
-            # Actually looking at the click: pred_btn.click(predict, idx, [out_text, out_plot, out_explain, profile_out]) - so we have 4 outputs. The predict returns (result_text, fig, explain, profile_html). So profile_out gets profile_html. Good. But we need to show profile_out - it might be in the layout. Let me add it. Actually we have profile_out = gr.Markdown(visible=True) - so it's in the layout. Good. The order of outputs might need to match - we have out_text, out_plot, out_explain, profile_out. So we need predict to return in that order. Currently we return result_text, fig, explain, profile_html. So we need [out_text, out_plot, out_explain, profile_out] = [result_text, fig, explain, profile_html]. Good.
+
+            demo.load(
+                get_applicant_choices,
+                [filter_gender, filter_location, filter_msme],
+                [applicant_select, profile_out],
+            )
+            apply_filters_btn.click(
+                get_applicant_choices,
+                [filter_gender, filter_location, filter_msme],
+                [applicant_select, profile_out],
+            )
+            filter_gender.change(
+                get_applicant_choices,
+                [filter_gender, filter_location, filter_msme],
+                [applicant_select, profile_out],
+            )
+            filter_location.change(
+                get_applicant_choices,
+                [filter_gender, filter_location, filter_msme],
+                [applicant_select, profile_out],
+            )
+            filter_msme.change(
+                get_applicant_choices,
+                [filter_gender, filter_location, filter_msme],
+                [applicant_select, profile_out],
+            )
+            applicant_select.change(
+                show_applicant_profile,
+                applicant_select,
+                [profile_out, score_hint, out_plot, out_text],
+            )
+            random_btn.click(
+                pick_random_applicant,
+                [filter_gender, filter_location, filter_msme],
+                [applicant_select, profile_out, score_hint, out_plot, out_text],
+            )
+            score_btn.click(
+                run_credit_score,
+                applicant_select,
+                [out_text, out_plot, out_explain],
+            )
 
         with gr.TabItem("📈 Results"):
             gr.Markdown("**Model performance** — AUC-ROC, AUC-PR, F1. LoRA efficiency (§3.5).")

@@ -279,7 +279,7 @@ Use this flow when presenting to the dissertation panel. Each tab demonstrates o
 | Order | Tab | What to do | Objective(s) |
 |-------|-----|------------|--------------|
 | 1 | **Overview** | State the problem: 89% credit excluded. Introduce LoRA + alternative data. | All (context) |
-| 2 | **Live Demo** | Pick a customer index (e.g. 100). Click **Predict**. Show score, risk, top drivers. | 1, 2 |
+| 2 | **Live Demo** | Filter applicants (e.g. female, rural, MSME), review the profile, then click **Check credit score**. Show score, risk, top drivers. | 1, 2 |
 | 3 | **Results** | Click **View results**. Highlight LoRA AUC vs baselines, parameter efficiency (~2–8%). | 2, 3 |
 | 4 | **Fairness** | Click **View fairness**. Show performance by gender, location, youth, MSME. | 4 |
 | 5 | **Explainability** | Click **View explainability**. Show feature importance chart. | 2, 4 |
@@ -289,7 +289,7 @@ Use this flow when presenting to the dissertation panel. Each tab demonstrates o
 ### Suggested Script (30–60 seconds per tab)
 
 1. **Overview:** *"89% of Zimbabweans lack formal credit. We use LoRA with alternative data—mobile money, utilities—to score credit for the unbanked."*
-2. **Live Demo:** *"Here’s customer 100: female, rural, MSME. The model predicts a score of X with low/medium/high risk. Top drivers are utility consistency and transaction frequency."*
+2. **Live Demo:** *"Here’s a rural MSME applicant — female, EcoCash user, mixed utility history. After reviewing her profile, the model predicts a score of X with low/medium/high risk. Top drivers are utility consistency and transaction frequency."*
 3. **Results:** *"LoRA matches or beats logistic regression and random forest. Only ~3% of parameters are trained—ideal for resource-limited settings."*
 4. **Fairness:** *"Performance is balanced across gender, location, age, and MSME status, in line with RBZ fairness expectations."*
 5. **Explainability:** *"Feature importance and SHAP give transparent explanations for each decision, supporting regulatory review."*

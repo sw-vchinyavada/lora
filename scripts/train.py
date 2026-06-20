@@ -88,7 +88,7 @@ def main():
     X, y, _ = prep.fit_transform(df)
     X_train, X_val, X_test, y_train, y_val, y_test = prep.split(X, y)
     n_feat = X_train.shape[1]
-    feature_names = prep.feature_columns_
+    feature_names = prep.numerical_features + list(prep.categorical_features)
 
     _, _, test_idx = prep.split_indices(len(y), y)
     df_fairness = df.iloc[test_idx].reset_index(drop=True)
@@ -124,7 +124,7 @@ def main():
     t0 = time.perf_counter()
     n0, n1 = (y_train == 0).sum(), (y_train == 1).sum()
     w0, w1 = n1 / (n0 + n1) if n1 > 0 else 1.0, n0 / (n0 + n1) if n0 > 0 else 1.0
-    trainer = LoRATrainer(lora, learning_rate=2e-5, device=args.device, patience=5, class_weights=(w0, w1))
+    trainer = LoRATrainer(lora, device=args.device, patience=5, class_weights=(w0, w1))
     trainer.fit(X_train, y_train, X_val, y_val, epochs=args.epochs, batch_size=args.batch_size)
     lora_train_time = time.perf_counter() - t0
     lora.save_pretrained(str(out_dir / "lora" / "best_model.pt"))

@@ -22,7 +22,11 @@ class LoRATrainer:
         """class_weights: (w0, w1) inversely proportional to class freq per dissertation §3.6."""
         self.model = model.to(device)
         self.device = device
-        self.optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+        if hasattr(model, "trainable_parameter_groups"):
+            groups = model.trainable_parameter_groups()
+            self.optimizer = torch.optim.AdamW(groups, weight_decay=0.01)
+        else:
+            self.optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
         if class_weights is not None:
             w = torch.FloatTensor(class_weights)
             self.criterion = nn.CrossEntropyLoss(weight=w.to(device))

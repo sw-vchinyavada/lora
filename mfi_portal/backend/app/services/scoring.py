@@ -2,17 +2,18 @@
 import sys
 from pathlib import Path
 
-# Add project root (lora-project) for imports
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import numpy as np
 import pandas as pd
 from typing import Optional, Dict, Any, List
 
+from src.scoring.inference import probability_to_score, risk_band
+
+_APPLICANT_ALIASES = {"mm_txn_freq": "mm_txn_per_month", "mm_avg_amount_usd": "mm_avg_txn_usd"}
+
 
 def _load_model_and_prep():
-    """Load LoRA and preprocessor from models/."""
     models_dir = PROJECT_ROOT / "models"
     if not (models_dir / "lora" / "best_model.pt").exists():
         return None, None
@@ -24,12 +25,7 @@ def _load_model_and_prep():
     return lora, prep
 
 
-# Alias: Applicant (MFI) fields -> new synthetic schema
-_APPLICANT_ALIASES = {"mm_txn_freq": "mm_txn_per_month", "mm_avg_amount_usd": "mm_avg_txn_usd"}
-
-
 def _applicant_to_dataframe(applicant: Dict[str, Any]) -> pd.DataFrame:
-    """Convert applicant dict to DataFrame with expected feature columns (Zimbabwe schema)."""
     defaults = {
         "gender": "male", "age": 35, "youth": 0, "location": "urban", "region": "Harare",
         "education": "secondary", "household_size": 4, "employment": "informal", "sector": "other", "msme": 0,
@@ -52,7 +48,6 @@ def _applicant_to_dataframe(applicant: Dict[str, Any]) -> pd.DataFrame:
     for old_name, new_name in _APPLICANT_ALIASES.items():
         if old_name in row and new_name not in row:
             row[new_name] = row[old_name]
-    # Derived: youth from age, txn_cv, payment_trend
     age = row.get("age", 35)
     row["youth"] = 1 if age <= 35 else 0
     vol = row.get("mm_balance_volatility", 0.5)
@@ -63,10 +58,6 @@ def _applicant_to_dataframe(applicant: Dict[str, Any]) -> pd.DataFrame:
 
 
 def compute_score(applicant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Compute credit score for applicant.
-    Returns: {score, default_probability, risk_band, top_drivers} or None if model unavailable.
-    """
     lora, prep = _load_model_and_prep()
     if lora is None or prep is None:
         return None
@@ -78,15 +69,11 @@ def compute_score(applicant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     df = df[prep.feature_columns_]
     X = prep.transform(df)
     if X.shape[1] != lora.num_features:
-        pad = max(0, lora.num_features - X.shape[1])
-        X = np.pad(X, ((0, 0), (0, pad)), constant_values=0)[:, :lora.num_features]
+        return None
 
     proba = float(lora.predict_proba_numpy(X)[0])
-    score = int(850 - proba * 550)
-    score = max(300, min(850, score))
-    risk = "Low" if proba < 0.3 else "Medium" if proba < 0.6 else "High"
+    score = probability_to_score(proba)
 
-    # Top drivers from feature importance
     top_drivers: List[Dict] = []
     fi_path = PROJECT_ROOT / "results" / "metrics" / "feature_importance.json"
     if fi_path.exists():
@@ -94,12 +81,12 @@ def compute_score(applicant: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         with open(fi_path) as f:
             data = json.load(f)
         fi = data.get("feature_importance", []) or data.get("shap_importance", [])
-        key = "importance" if "importance" in (fi[0] or {}) else "mean_abs_shap"
+        key = "importance" if fi and "importance" in (fi[0] or {}) else "mean_abs_shap"
         top_drivers = [{"feature": t["feature"], "importance": t.get(key, 0)} for t in fi[:5]]
 
     return {
         "score": score,
         "default_probability": round(proba, 4),
-        "risk_band": risk,
+        "risk_band": risk_band(proba),
         "top_drivers": top_drivers,
     }

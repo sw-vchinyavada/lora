@@ -62,7 +62,7 @@ services:
   # One-shot training (run once to train models)
   train:
     build: .
-    command: python scripts/train.py --dataset zimbabwe_synthetic --epochs 10
+    command: python scripts/train.py --dataset zimbabwe_synthetic --n-samples 5000 --epochs 15
     volumes:
       - ./models:/app/models
       - ./data:/app/data

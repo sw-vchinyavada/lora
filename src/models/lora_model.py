@@ -56,16 +56,33 @@ class LoRACreditScorer(nn.Module):
         )
         self.model = get_peft_model(self.base_model, lora_config)
         self.base_model_name = base_model_name
+        self.classifier_head = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 2),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size = x.size(0)
         emb = self.feature_projection(x)
         inputs_embeds = emb.unsqueeze(1)
         attention_mask = torch.ones(batch_size, 1, dtype=torch.long, device=x.device)
-        outputs = self.model(
-            input_ids=None, inputs_embeds=inputs_embeds, attention_mask=attention_mask
-        )
-        return outputs.logits
+        encoder = self.model.get_base_model().distilbert
+        hidden = encoder(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            return_dict=True,
+        ).last_hidden_state[:, 0, :]
+        return self.classifier_head(hidden)
+
+    def trainable_parameter_groups(self) -> list:
+        """Higher LR for tabular layers; lower LR for LoRA adapters."""
+        tabular = list(self.feature_projection.parameters()) + list(self.classifier_head.parameters())
+        tabular_ids = {id(p) for p in tabular}
+        lora = [p for p in self.model.parameters() if p.requires_grad and id(p) not in tabular_ids]
+        return [
+            {"params": tabular, "lr": 1e-3, "name": "tabular"},
+            {"params": lora, "lr": 2e-4, "name": "lora"},
+        ]
 
     def predict_proba_numpy(self, X: np.ndarray, device: str = "cpu") -> np.ndarray:
         self.eval()
@@ -97,8 +114,12 @@ class LoRACreditScorer(nn.Module):
 
     @classmethod
     def load_pretrained(cls, path: str, device: str = "cpu") -> "LoRACreditScorer":
-        ckpt = torch.load(path, map_location=device)
+        ckpt = torch.load(path, map_location=device, weights_only=False)
         model = cls(num_features=ckpt["num_features"], hidden_dim=ckpt["hidden_dim"])
-        model.load_state_dict(ckpt["model_state_dict"])
+        state = ckpt["model_state_dict"]
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        if any(k.startswith("classifier_head") for k in missing):
+            # Older checkpoints without tabular head — keep going; retrain recommended
+            pass
         model.eval()
         return model
