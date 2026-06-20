@@ -67,6 +67,12 @@ def load_model_and_prep():
     return lora, prep, df, len(df) - 1
 
 
+def get_applicant_slider_max(default: int = 4999) -> int:
+    """Match slider range to the loaded dataset (training often uses 5K, not 50K)."""
+    out = load_model_and_prep()
+    return out[3] if out[0] is not None else default
+
+
 def predict(sample_idx: int):
     out = load_model_and_prep()
     if out[0] is None:
@@ -78,12 +84,15 @@ def predict(sample_idx: int):
         )
 
     lora, prep, df, max_idx = out
-    sample_idx = min(max(0, int(sample_idx)), max_idx)
+    requested_idx = int(sample_idx)
+    sample_idx = min(max(0, requested_idx), max_idx)
 
     # Customer profile preview
     row = df.iloc[sample_idx]
     profile_cols = [c for c in ["gender", "age", "location", "employment", "msme", "sector"] if c in df.columns]
-    profile_parts = []
+    profile_parts = [f"**Applicant #:** {sample_idx} (of {max_idx:,})"]
+    if requested_idx != sample_idx:
+        profile_parts.append(f"*(slider was {requested_idx:,}; clamped to dataset size)*")
     for c in profile_cols:
         v = row.get(c, "")
         if pd.notna(v):
@@ -326,7 +335,7 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
         with gr.TabItem("🔮 Live Demo"):
             gr.Markdown("**Predict credit risk** — Select an applicant and view the LoRA model's score.")
             with gr.Row():
-                idx = gr.Slider(0, 49999, 0, step=1, label="Applicant #")
+                idx = gr.Slider(0, get_applicant_slider_max(), 0, step=1, label="Applicant #")
                 pred_btn = gr.Button("Predict", variant="primary", size="lg")
             profile_out = gr.Markdown("*Select an applicant and click Predict*")
             with gr.Row():
