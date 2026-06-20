@@ -1,7 +1,7 @@
 """
 Fairness evaluation for credit scoring models.
 
-Per dissertation §3.7-3.8 (MTech_Dissertation_Chapters_1-3):
+Per MTECH Software Engineering Project Documentation §3.6.3:
 - Demographic parity: difference in positive prediction rates
 - Equal opportunity: difference in TPR (recall) across groups
 - Equalized odds: difference in TPR and FPR across groups
@@ -43,19 +43,19 @@ def _group_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray) 
 
 
 def demographic_parity_difference(group_metrics: Dict[str, Dict]) -> float:
-    """|max_rate - min_rate|. 0 = perfect parity (§3.7)."""
+    """|max_rate - min_rate|. 0 = perfect parity (§3.6.3)."""
     rates = [m["positive_rate"] for m in group_metrics.values()]
     return max(rates) - min(rates) if len(rates) >= 2 else 0.0
 
 
 def equal_opportunity_difference(group_metrics: Dict[str, Dict]) -> float:
-    """|max_TPR - min_TPR|. 0 = equal opportunity (§3.7)."""
+    """|max_TPR - min_TPR|. 0 = equal opportunity (§3.6.3)."""
     tprs = [m["tpr"] for m in group_metrics.values()]
     return max(tprs) - min(tprs) if len(tprs) >= 2 else 0.0
 
 
 def equalized_odds_difference(group_metrics: Dict[str, Dict]) -> Dict[str, float]:
-    """Max TPR diff and max FPR diff across groups (§3.7)."""
+    """Max TPR diff and max FPR diff across groups (§3.6.3)."""
     tprs = [m["tpr"] for m in group_metrics.values()]
     fprs = [m["fpr"] for m in group_metrics.values()]
     return {
@@ -72,8 +72,8 @@ def compute_fairness_metrics(
     feature_columns: list,
 ) -> Dict[str, Any]:
     """
-    Fairness metrics per §3.7: demographic parity, equal opportunity, equalized odds.
-    Subgroups: gender, location, age (youth/adult), MSME (§3.8).
+    Fairness metrics per §3.6.3: demographic parity, equal opportunity, equalized odds.
+    Subgroups: gender, location, age (youth/adult), income quartile, MSME (§3.6.3).
     """
     results = {"groups": {}, "disparity": {}, "fairness_metrics": {}}
 
@@ -90,6 +90,8 @@ def compute_fairness_metrics(
         attr_map["age_group"] = np.where(df["age"].values <= 35, "youth", "adult")
     if "msme" in df.columns:
         attr_map["msme"] = df["msme"].map({0: "non_msme", 1: "msme"}).fillna("unknown")
+    if "income_quartile" in df.columns:
+        attr_map["income_quartile"] = df["income_quartile"].astype(str)
 
     for attr_name, attr_vals in attr_map.items():
         if attr_vals is None or len(attr_vals) != len(y_true):

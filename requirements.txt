@@ -27,8 +27,9 @@ pydantic>=2.5.0
 gradio>=4.0.0
 plotly>=5.18.0
 
-# Explainability (§3.7)
+# Explainability (§4.4.9)
 shap>=0.43.0
+matplotlib>=3.8.0
 
 # Utils
 pyyaml>=6.0.0

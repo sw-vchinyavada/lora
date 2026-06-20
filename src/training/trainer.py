@@ -19,7 +19,7 @@ class LoRATrainer:
         patience: int = 5,
         class_weights: tuple = None,
     ):
-        """class_weights: (w0, w1) inversely proportional to class freq per dissertation §3.6."""
+        """class_weights: (w0, w1) inversely proportional to class freq per dissertation §3.5.3."""
         self.model = model.to(device)
         self.device = device
         if hasattr(model, "trainable_parameter_groups"):

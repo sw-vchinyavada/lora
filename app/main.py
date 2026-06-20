@@ -59,13 +59,16 @@ h1 { font-size: 2rem !important; letter-spacing: -0.02em !important; }
 """
 
 DEMO_FLOW = """
-**Suggested demo flow for the panel:**
-1. **Overview** → State the problem (89% credit excluded) and LoRA solution
-2. **Live Demo** → Filter and pick an applicant, review their profile, then run the credit check
-3. **Results** → Compare models: LoRA vs baselines, highlight parameter efficiency
-4. **Fairness** → Show performance across gender, location — *"Balanced across subgroups"*
-5. **Explainability** → Feature importance — *"Transparent for regulators"*
-6. **Policy** → Recommendations aligned with NDS
+**Panel presentation flow (aligned with dissertation §1.5):**
+1. **Overview** → Problem (89% credit excluded), 5 objectives, research questions RQ1–RQ4
+2. **Dataset** → Objective 1: synthetic alternative data (mobile money, utilities, digital commerce)
+3. **Live Demo** → Objective 2: LoRA credit score with per-applicant drivers
+4. **Results** → Objectives 2 & 3: LoRA vs baselines (AUC-ROC, AUC-PR, F1)
+5. **Efficiency** → Objective 3: trainable params, training time, inference latency
+6. **Fairness** → Objective 4: gender, age, location, income quartile, MSME
+7. **Explainability** → LoRA feature attribution + RF SHAP comparison
+8. **Policy** → Objective 5: NDS1/NDS2 and National AI Strategy recommendations
+9. **MFI Portal** (http://localhost:5174) → deployment architecture §C.4
 """
 
 
@@ -302,7 +305,13 @@ def run_credit_score(applicant_id: str):
     explain = ""
     top = result.get("top_drivers") or []
     if top:
-        explain = "**Top risk drivers:** " + " → ".join(f"*{t['feature']}*" for t in top[:4])
+        parts = []
+        for t in top[:4]:
+            feat = t.get("feature", "")
+            direction = t.get("direction", "")
+            impact = t.get("impact", t.get("importance", 0))
+            parts.append(f"*{feat}* ({direction}, Δ{abs(float(impact)):.3f})")
+        explain = "**LoRA drivers for this applicant:** " + " → ".join(parts)
 
     result_text = f"### {risk}\n**Default probability:** {proba:.1%}  |  **Score:** {score}"
     return result_text, fig, explain
@@ -360,21 +369,61 @@ def model_comparison():
     y_cols = [c for c in ["AUC-ROC", "AUC-PR", "F1"] if c in df.columns]
     fig = px.bar(df, x="Model", y=y_cols, barmode="group",
                  color_discrete_sequence=["#0ea5e9", "#10b981", "#f59e0b"][:len(y_cols)],
-                 title="Model Comparison (§3.7)")
+                 title="Model Comparison (§3.6.1, §4.4.4)")
     fig.update_layout(height=340, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(248,250,252,0.9)", font=dict(size=12),
                       xaxis_tickangle=-15, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
 
     eff = ""
     if lora and "trainable_params" in lora:
-        eff = f"**LoRA efficiency:** {lora['trainable_params']:,} / {lora['total_params']:,} params trained (~{100*lora['trainable_params']/lora['total_params']:.1f}%) — *§3.5*"
+        eff = (
+            f"**LoRA efficiency (Objective 3):** {lora['trainable_params']:,} / {lora['total_params']:,} params "
+            f"(~{100 * lora['trainable_params'] / lora['total_params']:.1f}%) · "
+            f"Train: {lora.get('train_time_sec', 0):.0f}s · "
+            f"Inference: {lora.get('inference_latency_ms', '—')}ms · "
+            f"Peak memory: {lora.get('peak_memory_mb', '—')} MB"
+        )
 
     return fig, cards_html, eff
+
+
+def efficiency_dashboard():
+    path = Path("results/metrics/training_results.json")
+    if not path.exists():
+        return None, "Run training first: `python scripts/train.py`"
+
+    with open(path) as f:
+        r = json.load(f)
+    lora = r.get("lora", {})
+    if not lora:
+        return None, "LoRA results not found."
+
+    labels = ["Trainable params (M)", "Training time (min)", "Inference (ms)", "Peak memory (MB)"]
+    values = [
+        lora.get("trainable_params", 0) / 1e6,
+        lora.get("train_time_sec", 0) / 60,
+        lora.get("inference_latency_ms", 0),
+        lora.get("peak_memory_mb", 0),
+    ]
+    fig = go.Figure(go.Bar(x=labels, y=values, marker_color=["#8b5cf6", "#0ea5e9", "#10b981", "#f59e0b"]))
+    fig.update_layout(
+        title="Computational Efficiency — Objective 3 (§3.6.2, §4.4.6)",
+        height=340,
+        paper_bgcolor="rgba(0,0,0,0)",
+        yaxis_title="Value",
+    )
+    pct = 100 * lora.get("trainable_params", 0) / max(lora.get("total_params", 1), 1)
+    note = (
+        f"**Objective 3:** LoRA trains only **~{pct:.1f}%** of parameters while maintaining competitive AUC. "
+        f"Inference latency **{lora.get('inference_latency_ms', '—')} ms** per applicant supports "
+        f"real-time MFI deployment in resource-constrained settings."
+    )
+    return fig, note
 
 
 def fairness_dashboard():
     path = Path("results/metrics/fairness_results.json")
     if not path.exists():
-        return None, "Run training first to see fairness metrics (§3.7).", None
+        return None, "Run training first to see fairness metrics (§3.6.3).", None
 
     with open(path) as f:
         data = json.load(f)
@@ -383,7 +432,7 @@ def fairness_dashboard():
     fm = lora.get("fairness_metrics", {})
 
     if not groups:
-        return None, "Use **zimbabwe_synthetic** dataset for gender, location, youth, MSME subgroups (§3.8)."
+        return None, "Use **zimbabwe_synthetic** dataset for gender, location, age, income quartile, MSME subgroups (§3.6.3)."
 
     rows = []
     for attr, gdata in groups.items():
@@ -395,7 +444,7 @@ def fairness_dashboard():
 
     fig = px.bar(df, x="Group", y=["AUC", "TPR"], color="Attribute", barmode="group",
                  color_discrete_sequence=["#0ea5e9", "#10b981", "#f59e0b", "#8b5cf6"],
-                 title="Performance by Protected Group (§3.7–3.8)")
+                 title="Performance by Protected Group (§3.6.3, §4.4.8)")
     fig.update_layout(height=340, paper_bgcolor="rgba(0,0,0,0)", xaxis_tickangle=-20, font=dict(size=11))
 
     parts = []
@@ -408,21 +457,26 @@ def fairness_dashboard():
 def explainability_tab():
     path = Path("results/metrics/feature_importance.json")
     if not path.exists():
-        return None, "Run training first. Feature importance & SHAP computed for interpretability (§3.7)."
+        return None, "Run training first. LoRA attribution and RF SHAP computed in §4.4.9."
 
     with open(path) as f:
         data = json.load(f)
-    fi = data.get("feature_importance", []) or data.get("shap_importance", [])
+    fi = data.get("lora_global_attribution") or data.get("feature_importance") or data.get("shap_importance", [])
     if not fi:
         return None, "No explainability data."
 
     df = pd.DataFrame(fi)
-    y_col = "importance" if "importance" in df.columns else "mean_abs_shap"
+    y_col = "mean_abs_impact" if "mean_abs_impact" in df.columns else (
+        "importance" if "importance" in df.columns else "mean_abs_shap"
+    )
     fig = px.bar(df.head(12), x="feature", y=y_col,
                  color=y_col, color_continuous_scale=["#e0f2fe", "#0ea5e9", "#0369a1"],
-                 title="Top Features Driving Credit Decisions (§3.7)")
+                 title="LoRA Global Feature Attribution — Objective 2 (§4.4.9)")
     fig.update_layout(height=360, xaxis_tickangle=-35, paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
-    return fig, "**Regulatory alignment:** Transparency for RBZ guidelines & Data Protection Act. Enables applicant communication and audit trails."
+    return fig, (
+        "**Live Demo** shows *per-applicant* LoRA drivers. This chart shows aggregate attribution. "
+        "RF SHAP values are retained for baseline comparison (§4.4.9)."
+    )
 
 
 def dataset_info():
@@ -440,7 +494,7 @@ def dataset_info():
     defs = int(df[tc].sum()) if tc else 0
     pct = 100 * defs / n if n else 0
 
-    desc = "**Zimbabwe alternative data** (synthetic): mobile money, utility payments, demographics. Aligned with NDS §3.2." if dn == "zimbabwe_synthetic" else f"**{dn}** — benchmark dataset."
+    desc = "**Zimbabwe alternative data** (synthetic §3.3): mobile money, utility payments, digital commerce, demographics — **Objective 1**." if dn == "zimbabwe_synthetic" else f"**{dn}** — validation benchmark (§3.3.5)."
     summary = f"{desc}\n\n**{n:,}** samples  ·  **{defs:,}** defaults ({pct:.1f}%)  ·  **{len(df.columns)-1}** features"
     table_html = df.head(40).to_html(classes="table-auto", index=False)
     table = f'<div style="overflow-x:auto; overflow-y:auto; max-height:400px; max-width:100%;">{table_html}</div>'
@@ -489,27 +543,28 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
     with gr.Tabs() as tabs:
         with gr.TabItem("📋 Overview"):
             gr.Markdown("""
-            ### Research problem
-            **89%** of Zimbabweans lack access to formal credit despite 84% financial inclusion (FinScope 2022).  
-            Traditional scoring excludes the informal sector, MSMEs, women, youth, and rural populations.
+            ### Research aim (§1.5)
+            Develop and evaluate a **LoRA-enhanced alternative data credit scoring system** that expands financial inclusion in Zimbabwe while maintaining computational efficiency, fairness, and NDS alignment.
 
-            ### Proposed solution
-            **LoRA** (Low-Rank Adaptation) + alternative data:
-            - **Mobile money** (EcoCash, OneMoney) — transaction patterns, balance volatility
-            - **Utility payments** — electricity, water, telecom consistency
-            - **Behavioral** — digital engagement, app usage
-            - **Parameter efficiency** — ~99% reduction vs full fine-tuning
+            ### Specific objectives
+            | # | Objective | Demo tab |
+            |---|-----------|----------|
+            | **1** | Synthetic alternative data framework (mobile money, utilities, digital commerce) | **Dataset** |
+            | **2** | LoRA-enhanced credit scoring model | **Live Demo**, **Results**, **Explainability** |
+            | **3** | Computational efficiency (params, time, latency, memory) | **Efficiency**, **Results** |
+            | **4** | Fairness across gender, age, location, income, MSME | **Fairness** |
+            | **5** | Policy alignment with NDS, National AI Strategy, RBZ | **Policy** |
 
-            ### Objectives addressed
-            | # | Objective | ✓ |
-            |---|----------|---|
-            | 1 | Alternative data (mobile money, utility bills) | ✓ |
-            | 2 | LoRA for efficient parameter customisation | ✓ |
-            | 3 | Compare LoRA vs traditional/baseline ML models | ✓ |
-            | 4 | LoRA’s contribution to financial inclusion under NDS | ✓ |
+            ### Research questions
+            | RQ | Question | Addressed in |
+            |----|----------|--------------|
+            | **RQ1** | How can alternative data be synthesised for unbanked populations? | Dataset, Live Demo |
+            | **RQ2** | Does LoRA maintain performance with reduced compute? | Results, Efficiency |
+            | **RQ3** | What fairness characteristics emerge and how are they mitigated? | Fairness |
+            | **RQ4** | How can the system align with national development priorities? | Policy, MFI Portal |
 
             ---
-            *Hu et al. (2021) · Zimbabwe NDS · RBZ Responsible AI Guidelines*
+            *MTECH Software Engineering Project Documentation · Hu et al. (2021) · Zimbabwe NDS1/NDS2*
             """)
 
         with gr.TabItem("🔮 Live Demo"):
@@ -595,29 +650,36 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
             )
 
         with gr.TabItem("📈 Results"):
-            gr.Markdown("**Model performance** — AUC-ROC, AUC-PR, F1. LoRA efficiency (§3.5).")
+            gr.Markdown("**Objectives 2 & 3** — LoRA vs baselines: AUC-ROC, AUC-PR, F1 (§4.4.4).")
             comp_btn = gr.Button("View results", variant="primary")
             comp_cards = gr.HTML()
             comp_plot = gr.Plot()
             comp_note = gr.Markdown()
             comp_btn.click(model_comparison, None, [comp_plot, comp_cards, comp_note])
 
+        with gr.TabItem("⚡ Efficiency"):
+            gr.Markdown("**Objective 3** — Trainable parameters, training time, inference latency, memory (§3.6.2).")
+            eff_btn = gr.Button("View efficiency", variant="primary")
+            eff_plot = gr.Plot()
+            eff_note = gr.Markdown()
+            eff_btn.click(efficiency_dashboard, None, [eff_plot, eff_note])
+
         with gr.TabItem("⚖️ Fairness"):
-            gr.Markdown("**Fairness assessment** — Performance across gender, location, age, MSME (§3.7–3.8).")
+            gr.Markdown("**Objective 4** — Performance across gender, location, age, income quartile, MSME (§3.6.3).")
             fair_btn = gr.Button("View fairness", variant="primary")
             fair_note = gr.Markdown()
             fair_plot = gr.Plot()
             fair_btn.click(fairness_dashboard, None, [fair_plot, fair_note])
 
         with gr.TabItem("🔍 Explainability"):
-            gr.Markdown("**Transparency** — Feature importance & SHAP for regulators (§3.7).")
+            gr.Markdown("**Objective 2** — LoRA feature attribution and RF SHAP for regulators (§4.4.9).")
             exp_btn = gr.Button("View explainability", variant="primary")
             exp_note = gr.Markdown()
             exp_plot = gr.Plot()
             exp_btn.click(explainability_tab, None, [exp_plot, exp_note])
 
         with gr.TabItem("📊 Dataset"):
-            gr.Markdown("**Data overview** — Zimbabwe synthetic or benchmark dataset (§3.2).")
+            gr.Markdown("**Objective 1** — Synthetic alternative data framework (§3.3).")
             ds_btn = gr.Button("View dataset", variant="primary")
             ds_text = gr.Markdown()
             ds_table = gr.HTML()
@@ -625,25 +687,24 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
 
         with gr.TabItem("📜 Policy"):
             gr.Markdown("""
-            ### Evidence-based recommendations (NDS alignment)
+            ### Objective 5 — Policy alignment (§6.3, Appendix E)
 
-            **Policymakers**
-            - Integrate alternative data standards into credit bureau regulations
-            - Support LoRA-enhanced MSME lending pilots
-            - Establish fairness monitoring (gender, geographic, age)
+            **Financial institutions & fintech (§6.3.1)**
+            - Partner with EcoCash and OneMoney for consented alternative data access
+            - Deploy LoRA adapters for cost-efficient scoring on modest hardware
+            - Publish explainability summaries for applicants and regulators
 
-            **Financial institutions**
-            - Partner with EcoCash, OneMoney for consented transaction data
-            - Deploy LoRA for cost-efficient AI infrastructure
-            - Adopt explainable AI for customer communication and regulators
+            **Policymakers & regulators (§6.3.2)**
+            - Establish regulatory sandboxes for alternative-data credit pilots (Appendix E.1)
+            - Integrate fairness monitoring (gender, geography, income quartile) into RBZ oversight
+            - Advance national credit data infrastructure (Appendix E.2)
 
-            **Technology providers**
-            - Develop LoRA adapters for Zimbabwe's demographic mix
-            - Meet Data Protection Act requirements
-            - Contribute to African alternative-data benchmarks
+            **Researchers (§6.3.3)**
+            - Extend LoRA rank sensitivity and cross-validation (Appendix D)
+            - Validate synthetic findings on real Zimbabwe fintech datasets when available
 
             ---
-            **NDS1/NDS2:** Financial inclusion >90% · MSME credit · Women & youth entrepreneurship
+            **NDS1/NDS2 · National AI Strategy:** Financial inclusion >90% · MSME credit · Women & youth entrepreneurship · Responsible AI
             """)
 
     gr.Markdown("---")

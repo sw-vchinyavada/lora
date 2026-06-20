@@ -26,7 +26,7 @@ class DataPreprocessor:
         val_size: float = 0.15,
         random_state: int = 42
     ):
-        """test_size + val_size = 0.30 => train 70% per dissertation §3.2."""
+        """test_size + val_size = 0.30 => train 70% per dissertation §3.3.3."""
         self.numerical_features = numerical_features
         self.categorical_features = categorical_features
         self.target = target
@@ -119,7 +119,7 @@ class DataPreprocessor:
         y: np.ndarray,
         stratify: bool = True
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Train/val/test split: 70/15/15 per dissertation §3.2."""
+        """Train/val/test split: 70/15/15 per dissertation §3.3.3."""
         X_temp, X_test, y_temp, y_test = train_test_split(
             X, y, test_size=self.test_size,
             stratify=y if stratify else None,

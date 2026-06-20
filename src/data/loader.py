@@ -93,7 +93,7 @@ def load_zimbabwe_synthetic(
     force_regenerate: bool = False,
     default_rate: float = 0.10,
 ) -> pd.DataFrame:
-    """Load synthetic Zimbabwe alternative data (dissertation §3.2)."""
+    """Load synthetic Zimbabwe alternative data (dissertation §3.3)."""
     from .zimbabwe_synthetic import load_zimbabwe_synthetic as _load_synthetic
     return _load_synthetic(n_samples=n_samples, data_dir=data_dir, force_regenerate=force_regenerate, default_rate=default_rate)
 
@@ -103,13 +103,19 @@ def load_dataset(
     data_dir: Optional[str] = None,
     n_samples: int = 50000,
     default_rate: float = 0.10,
+    force_regenerate: bool = False,
 ) -> pd.DataFrame:
     """
     Load dataset by name.
     source: 'zimbabwe_synthetic' | 'credit_card_default' | 'german_credit' | path to CSV
     """
     if source == "zimbabwe_synthetic":
-        return load_zimbabwe_synthetic(n_samples=n_samples, data_dir=data_dir, default_rate=default_rate)
+        return load_zimbabwe_synthetic(
+            n_samples=n_samples,
+            data_dir=data_dir,
+            default_rate=default_rate,
+            force_regenerate=force_regenerate,
+        )
     if source == "credit_card_default":
         return load_credit_card_default(data_dir)
     if source == "german_credit":

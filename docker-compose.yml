@@ -4,7 +4,8 @@
 #   app           Gradio dissertation demo     http://localhost:7860
 #   mfi-api       MFI portal REST API          http://localhost:8000
 #   mfi-frontend  MFI React UI (nginx)         http://localhost:5174
-#   train         One-shot training (profile)  docker compose --profile train run --rm train
+#   train         Full methodology training 50K (profile train)
+#   train-quick   Quick demo training 5K (profile train-quick)
 #
 # Quick start:  docker compose up -d --build
 # Docs:         README.md § Docker
@@ -59,13 +60,24 @@ services:
       mfi-api:
         condition: service_healthy
 
-  # One-shot training (run once to train models)
+  # Full methodology training (50K per §3.3.3)
   train:
     build: .
-    command: python scripts/train.py --dataset zimbabwe_synthetic --n-samples 5000 --epochs 15
+    command: python scripts/train.py --dataset zimbabwe_synthetic --n-samples 50000 --epochs 15 --export-figures
     volumes:
       - ./models:/app/models
       - ./data:/app/data
       - ./results:/app/results
     profiles:
       - train
+
+  # Quick training for local demos (5K)
+  train-quick:
+    build: .
+    command: python scripts/train.py --dataset zimbabwe_synthetic --n-samples 5000 --epochs 10 --export-figures
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./results:/app/results
+    profiles:
+      - train-quick

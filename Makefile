@@ -17,7 +17,13 @@ clean:
 	@echo "Done."
 
 train:
-	$(PY) scripts/train.py --dataset zimbabwe_synthetic --epochs 10
+	$(PY) scripts/train.py --dataset zimbabwe_synthetic --n-samples 50000 --epochs 15 --export-figures
+
+train-quick:
+	$(PY) scripts/train.py --dataset zimbabwe_synthetic --n-samples 5000 --epochs 10 --export-figures
+
+export-figures:
+	$(PY) scripts/export_results.py
 
 run:
 	$(PY) -m app.main

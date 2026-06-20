@@ -58,8 +58,11 @@ Runs **both frontends** and the MFI API without installing Python or Node locall
 From the project root (`lora/`):
 
 ```bash
-# 1. Train models (writes to ./models and ./results on your machine)
+# 1. Train models — full methodology (50K per §3.3.3)
 docker compose --profile train run --rm train
+
+# Or quick demo training (5K, faster)
+docker compose --profile train-quick run --rm train-quick
 
 # 2. Build images and start all three services
 docker compose up -d --build
@@ -229,10 +232,10 @@ pip install -r requirements.txt
 
 ```bash
 # Quick run (5,000 samples, ~5–10 min on CPU)
-python scripts/train.py --dataset zimbabwe_synthetic --n-samples 5000 --epochs 10
+python scripts/train.py --dataset zimbabwe_synthetic --n-samples 5000 --epochs 10 --export-figures
 
 # Full run per methodology (50,000 samples, ~20–40 min)
-python scripts/train.py --dataset zimbabwe_synthetic --n-samples 50000 --epochs 15
+python scripts/train.py --dataset zimbabwe_synthetic --n-samples 50000 --epochs 15 --export-figures
 ```
 
 **Output:** Models saved to `models/`, metrics to `results/metrics/`.
@@ -274,17 +277,21 @@ See `mfi_portal/README.md` for details.
 
 ## 2. Demo Guide — Meeting Each Objective
 
-Use this flow when presenting to the dissertation panel. Each tab demonstrates one or more research objectives.
+Use this flow when presenting to the dissertation panel. Each tab maps to the five objectives in **MTECH Software Engineering Project Documentation** §1.5.
 
 | Order | Tab | What to do | Objective(s) |
 |-------|-----|------------|--------------|
-| 1 | **Overview** | State the problem: 89% credit excluded. Introduce LoRA + alternative data. | All (context) |
-| 2 | **Live Demo** | Filter applicants (e.g. female, rural, MSME), review the profile, then click **Check credit score**. Show score, risk, top drivers. | 1, 2 |
-| 3 | **Results** | Click **View results**. Highlight LoRA AUC vs baselines, parameter efficiency (~2–8%). | 2, 3 |
-| 4 | **Fairness** | Click **View fairness**. Show performance by gender, location, youth, MSME. | 4 |
-| 5 | **Explainability** | Click **View explainability**. Show feature importance chart. | 2, 4 |
-| 6 | **Dataset** | Click **View dataset**. Describe Zimbabwe synthetic data: mobile money, utility, demographics. | 1 |
-| 7 | **Policy** | Read recommendations. Link to NDS1/NDS2. | 4 |
+| 1 | **Overview** | State the problem (89% credit excluded), five objectives, RQ1–RQ4 | All (context) |
+| 2 | **Dataset** | Show 50K synthetic records; mobile money, utilities, digital commerce | **1** |
+| 3 | **Live Demo** | Filter applicant, review profile, run LoRA score | **2** |
+| 4 | **Results** | Compare LoRA AUC vs LR/RF/XGB baselines | **2**, **3** |
+| 5 | **Efficiency** | Trainable params (~2–8%), inference latency, memory | **3** |
+| 6 | **Fairness** | Performance by gender, location, age, income quartile, MSME | **4** |
+| 7 | **Explainability** | LoRA per-applicant drivers + global attribution | **2** |
+| 8 | **Policy** | NDS1/NDS2 and National AI Strategy recommendations | **5** |
+| 9 | **MFI Portal** | http://localhost:5174 — deployment (Appendix C.4) | **5** |
+
+See **`DISSERTATION_ALIGNMENT.md`** for the full chapter mapping.
 
 ### Suggested Script (30–60 seconds per tab)
 
@@ -300,12 +307,13 @@ Use this flow when presenting to the dissertation panel. Each tab demonstrates o
 
 ## 3. Objectives → Where to Demonstrate
 
-| # | Research Objective (from §1.3) | Where to demo |
-|---|--------------------------------|---------------|
-| **1** | Identify and integrate alternative data sources (mobile money, utility bills) | **Dataset** tab: feature list. **Live Demo**: customer profile. **Overview**: mobile money, utility, demographics. |
-| **2** | Develop credit scoring model incorporating LoRA for efficient parameter customisation | **Results** tab: LoRA efficiency (~2–8% params). **Overview**: parameter reduction. **Explainability**: transparent decisions. |
-| **3** | Compare LoRA-based model with traditional and baseline ML models | **Results** tab: bar chart, LR/RF/XGB vs LoRA; AUC-ROC, AUC-PR, F1. **Overview**: model comparison. |
-| **4** | Examine LoRA’s contribution to financial inclusion under the NDS | **Fairness** tab: gender, location, age, MSME. **Policy** tab: NDS1/NDS2 recommendations. **Overview**: NDS alignment. |
+| # | Research Objective (§1.5) | Where to demo |
+|---|---------------------------|---------------|
+| **1** | Synthetic alternative data framework | **Dataset** tab |
+| **2** | LoRA-enhanced credit scoring model | **Live Demo**, **Results**, **Explainability** |
+| **3** | Computational efficiency | **Efficiency**, **Results** |
+| **4** | Fairness across demographic dimensions | **Fairness** tab |
+| **5** | NDS / National AI Strategy alignment | **Policy**, **MFI Portal** |
 
 ---
 
@@ -323,22 +331,28 @@ Use this flow when presenting to the dissertation panel. Each tab demonstrates o
 
 ```
 lora-project/
-├── README.md                 # This file
-├── docker-compose.yml        # app + mfi-api + mfi-frontend + train profile
-├── Dockerfile                # Gradio demo image
-├── app/main.py               # Demo UI
-├── scripts/train.py          # Training pipeline
+├── README.md                      # Setup and demo guide
+├── DISSERTATION_ALIGNMENT.md      # Objectives ↔ code mapping (§1.5)
+├── MTECH Software Engineering Project Documentation.docx
+├── docker-compose.yml             # app + mfi-api + mfi-frontend + train profiles
+├── Dockerfile                     # Gradio demo image
+├── app/main.py                    # Demo UI (8 tabs aligned to 5 objectives)
+├── scripts/
+│   ├── train.py                   # Training pipeline (§3 methodology)
+│   └── export_results.py          # Dissertation figures → results/figures/
 ├── mfi_portal/
-│   ├── backend/              # FastAPI (Dockerfile)
-│   ├── frontend/               # React + Vite (Dockerfile, nginx.conf)
-│   └── data/                 # SQLite DB (runtime, Docker volume)
+│   ├── backend/                   # FastAPI (Dockerfile)
+│   ├── frontend/                  # React + Vite (Dockerfile, nginx.conf)
+│   └── data/                      # SQLite DB (runtime, Docker volume)
 ├── src/
-│   ├── data/                 # Loader, preprocessor, zimbabwe_synthetic
-│   ├── models/               # LR, RF, XGB, LoRA
-│   ├── training/             # LoRA trainer
-│   └── evaluation/           # Fairness, explainability
-├── models/                   # Trained weights (generated)
-├── results/metrics/          # training_results, fairness_results, feature_importance
+│   ├── data/                      # Loader, preprocessor, zimbabwe_synthetic
+│   ├── models/                    # LR, RF, XGB, LoRA
+│   ├── training/                  # LoRA trainer
+│   ├── evaluation/                # Fairness, explainability
+│   └── scoring/                   # Shared inference (Gradio + MFI)
+├── models/                        # Trained weights (generated)
+├── results/metrics/               # training_results, fairness_results, feature_importance
+├── results/figures/               # PNG charts for Chapter 4 (generated)
 └── requirements.txt
 ```
 
@@ -380,4 +394,5 @@ lora-project/
 
 - Hu et al. (2021) *LoRA: Low-Rank Adaptation of Large Language Models*
 - Zimbabwe National Development Strategy (NDS1, NDS2)
-- Methodology: `MTech_Dissertation_Chapters_1-3_HARVARD_FINAL.md` §3
+- Methodology: `MTECH Software Engineering Project Documentation.docx` §3
+- Alignment guide: `DISSERTATION_ALIGNMENT.md`

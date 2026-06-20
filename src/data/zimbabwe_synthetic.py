@@ -1,18 +1,19 @@
 """
 Synthetic Zimbabwe Alternative Data for Credit Scoring.
 
-Aligned with refined_dissertation.md §2.4, §3.2:
+Aligned with MTECH Software Engineering Project Documentation §3.3:
 - EcoCash / OneMoney mobile money (90%+ market share)
 - ZESA (electricity), water, telecom utilities
 - Airtime & data bundles (telecom)
 - Social media / digital footprint
 - Reference: raw_credit_data.csv structure
 
-Features: ~50 (demographic, mobile money, utility, telecom, business, digital)
+Features: ~87 engineered (demographic, mobile money, utility, telecom, business, digital)
 Default rate: 8-12% (microfinance/MSME)
 Missing data: 5-15%
 """
 
+import json
 import numpy as np
 import pandas as pd
 from pathlib import Path
@@ -30,7 +31,7 @@ def generate_zimbabwe_alternative_data(
     random_state: int = 42,
 ) -> pd.DataFrame:
     """
-    Generate synthetic alternative data per dissertation §3.2 and refined_dissertation §2.4.
+    Generate synthetic alternative data per dissertation §3.3.2.
 
     Mobile money (EcoCash, OneMoney): transactions, volume, savings, P2P, regularity
     Telecom: airtime topups, data bundles, consistency
@@ -85,7 +86,7 @@ def generate_zimbabwe_alternative_data(
     data_bundles_per_month = rng.integers(0, 15, n_samples)
     data_avg_bundle_usd = rng.exponential(3, n_samples) + 0.5
 
-    # --- Utility (ZESA electricity, water, telecom bills - refined_dissertation §2.4.3) ---
+    # --- Utility (ZESA electricity, water, telecom bills — §3.3.2) ---
     zesa_type = rng.choice(["prepaid", "postpaid"], n_samples, p=[0.65, 0.35])
     utility_accounts_count = rng.integers(1, 4, n_samples)
     utility_payment_rate = rng.beta(3, 2, n_samples)
@@ -107,7 +108,7 @@ def generate_zimbabwe_alternative_data(
     business_revenue_trend = np.where(is_business_account, rng.normal(0, 0.3, n_samples), 0.0)
     business_months_active = np.where(is_business_account, rng.integers(1, 60, n_samples), 0)
 
-    # --- Digital footprint (social media, smartphone - refined_dissertation §2.4.1) ---
+    # --- Digital footprint (social media, smartphone — §3.3.2) ---
     has_smartphone = rng.choice([0, 1], n_samples, p=[0.35, 0.65])
     social_media_usage = rng.beta(2, 2, n_samples)
     social_media_platforms = rng.integers(0, 5, n_samples)
@@ -118,7 +119,7 @@ def generate_zimbabwe_alternative_data(
     service_disruption_count = rng.poisson(0.3, n_samples).clip(0, 5)
     channel_diversity = rng.integers(1, 5, n_samples)
 
-    # --- Remittance (diaspora - refined_dissertation §2.4.3) ---
+    # --- Remittance (diaspora — §3.3.2) ---
     remittance_receipt_freq = rng.choice([0, 1, 2, 3], n_samples, p=[0.5, 0.25, 0.15, 0.10])
     remittance_avg_usd = np.where(remittance_receipt_freq > 0, rng.exponential(100, n_samples) + 20, 0.0)
 
@@ -187,6 +188,15 @@ def generate_zimbabwe_alternative_data(
         "default": default,
     })
 
+    # Income proxy for fairness evaluation §3.6.3 (quartiles from financial activity)
+    activity_score = (
+        0.35 * (mm_total_volume_6m / (mm_total_volume_6m.max() + 1))
+        + 0.25 * (mm_savings_balance_avg / (mm_savings_balance_avg.max() + 1))
+        + 0.20 * utility_payment_rate
+        + 0.20 * mm_transaction_regularity
+    )
+    df["income_quartile"] = pd.qcut(activity_score, q=4, labels=["Q1", "Q2", "Q3", "Q4"]).astype(str)
+
     if missingness_rate > 0:
         n_missing = int(n_samples * len(df.columns) * missingness_rate)
         for _ in range(n_missing):
@@ -202,14 +212,34 @@ def load_zimbabwe_synthetic(
     force_regenerate: bool = False,
     default_rate: float = 0.10,
 ) -> pd.DataFrame:
-    """Load or generate Zimbabwe synthetic dataset per dissertation §3.2."""
+    """Load or generate Zimbabwe synthetic dataset per dissertation §3.3."""
     data_dir = Path(data_dir or "data/raw")
     data_dir.mkdir(parents=True, exist_ok=True)
     path = data_dir / "zimbabwe_alternative_data.csv"
 
-    if not path.exists() or force_regenerate:
+    meta_path = data_dir / "zimbabwe_alternative_data.meta.json"
+    needs_regen = force_regenerate or not path.exists()
+    if not needs_regen and meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+        if meta.get("n_samples") != n_samples or meta.get("default_rate") != default_rate:
+            needs_regen = True
+    elif not needs_regen:
+        existing_rows = sum(1 for _ in open(path, encoding="utf-8")) - 1
+        if existing_rows != n_samples:
+            needs_regen = True
+
+    if needs_regen:
         df = generate_zimbabwe_alternative_data(n_samples=n_samples, default_rate=default_rate)
         df.to_csv(path, index=False)
-        print(f"Generated {len(df)} samples, {df['default'].sum():,} defaults ({100*df['default'].mean():.1f}%), {len(df.columns)-1} features → {path}")
+        meta_path.write_text(json.dumps({
+            "n_samples": n_samples,
+            "default_rate": default_rate,
+            "feature_count": len(df.columns) - 1,
+            "source": "MTECH Software Engineering Project Documentation §3.3",
+        }, indent=2))
+        print(
+            f"Generated {len(df)} samples, {df['default'].sum():,} defaults "
+            f"({100 * df['default'].mean():.1f}%), {len(df.columns) - 1} features -> {path}"
+        )
 
     return pd.read_csv(path)

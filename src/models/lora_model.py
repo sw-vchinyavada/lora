@@ -66,12 +66,16 @@ class LoRACreditScorer(nn.Module):
         emb = self.feature_projection(x)
         inputs_embeds = emb.unsqueeze(1)
         attention_mask = torch.ones(batch_size, 1, dtype=torch.long, device=x.device)
-        encoder = self.model.get_base_model().distilbert
+        # Route through PEFT-wrapped encoder so LoRA adapters participate in inference.
+        base = self.model.get_base_model()
+        encoder = getattr(base, "distilbert", None) or base.model.distilbert
         hidden = encoder(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             return_dict=True,
         ).last_hidden_state[:, 0, :]
+        # Residual tabular signal — avoids DistilBERT collapsing diverse inputs to one logit.
+        hidden = hidden + emb
         return self.classifier_head(hidden)
 
     def trainable_parameter_groups(self) -> list:
@@ -118,8 +122,12 @@ class LoRACreditScorer(nn.Module):
         model = cls(num_features=ckpt["num_features"], hidden_dim=ckpt["hidden_dim"])
         state = ckpt["model_state_dict"]
         missing, unexpected = model.load_state_dict(state, strict=False)
-        if any(k.startswith("classifier_head") for k in missing):
-            # Older checkpoints without tabular head — keep going; retrain recommended
-            pass
+        if missing:
+            head_missing = [k for k in missing if k.startswith(("feature_projection", "classifier_head"))]
+            if head_missing:
+                raise RuntimeError(
+                    f"Incomplete checkpoint at {path}; missing layers: {head_missing[:3]}. "
+                    "Retrain with scripts/train.py."
+                )
         model.eval()
         return model
