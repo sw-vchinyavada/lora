@@ -198,10 +198,11 @@ def generate_zimbabwe_alternative_data(
     df["income_quartile"] = pd.qcut(activity_score, q=4, labels=["Q1", "Q2", "Q3", "Q4"]).astype(str)
 
     if missingness_rate > 0:
-        n_missing = int(n_samples * len(df.columns) * missingness_rate)
+        feature_cols = [c for c in df.columns if c != "default"]
+        n_missing = int(n_samples * len(feature_cols) * missingness_rate)
         for _ in range(n_missing):
-            r, c = rng.integers(0, n_samples), rng.integers(0, len(df.columns) - 1)
-            df.iloc[r, c] = np.nan
+            r, c = rng.integers(0, n_samples), rng.integers(0, len(feature_cols))
+            df.iloc[r, df.columns.get_loc(feature_cols[c])] = np.nan
 
     return df
 
@@ -227,6 +228,10 @@ def load_zimbabwe_synthetic(
         existing_rows = sum(1 for _ in open(path, encoding="utf-8")) - 1
         if existing_rows != n_samples:
             needs_regen = True
+        else:
+            sample = pd.read_csv(path, usecols=["default"], nrows=min(1000, existing_rows))
+            if sample["default"].isna().any():
+                needs_regen = True
 
     if needs_regen:
         df = generate_zimbabwe_alternative_data(n_samples=n_samples, default_rate=default_rate)

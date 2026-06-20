@@ -59,6 +59,8 @@ class DataPreprocessor:
     
     def fit_transform(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
         """Fit preprocessor and transform data."""
+        if self.target in df.columns:
+            df = df.dropna(subset=[self.target]).reset_index(drop=True)
         self._infer_features(df)
         
         X = df[self.feature_columns_].copy()

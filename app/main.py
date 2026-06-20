@@ -16,13 +16,35 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from app.demo_helpers import (
+    DEMO_SCENARIOS,
+    apply_demo_scenario_filters,
+    build_applicant_snapshot,
+    build_profile_html,
+    empty_snapshot,
+    load_demo_dataframe,
+    resolve_applicant_list,
+    scenario_extra_filter,
+    filter_applicant_indices,
+    applicant_choice_label,
+)
 
 
 # ─── Config ───────────────────────────────────────────────────────────────
 
 CUSTOM_CSS = """
 :root { --radius: 16px; --card-bg: rgba(255,255,255,0.95); }
-.gradio-container { max-width: 960px !important; margin: auto; }
+.gradio-container { max-width: 1120px !important; margin: auto; }
+.presentation-script {
+  background: #fffbeb; border: 1px solid #fcd34d; border-left: 4px solid #f59e0b;
+  border-radius: 12px; padding: 1rem 1.25rem; margin: 0.75rem 0 1rem;
+  font-size: 0.95rem; line-height: 1.65; color: #422006;
+}
+.presentation-script h4 { margin: 0 0 0.5rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: #92400e; }
+.presentation-script p { margin: 0.35rem 0; }
+.chart-caption { font-size: 0.88rem; color: #64748b; margin: 0.25rem 0 0.75rem; line-height: 1.5; }
 .gr-box { border-radius: var(--radius) !important; }
 .gr-button-primary { border-radius: 12px !important; font-weight: 600 !important; }
 h1 { font-size: 2rem !important; letter-spacing: -0.02em !important; }
@@ -56,6 +78,29 @@ h1 { font-size: 2rem !important; letter-spacing: -0.02em !important; }
 .profile-row span:last-child { color: #0f172a; font-weight: 600; text-align: right; }
 .score-panel { background: linear-gradient(180deg, #f8fafc 0%, #fff 100%); border: 1px dashed #cbd5e1; border-radius: 14px; padding: 1.25rem; margin-top: 0.5rem; }
 .score-panel-empty { color: #64748b; text-align: center; padding: 2rem 1rem; font-size: 0.95rem; }
+.applicant-snapshot {
+  display: flex; align-items: stretch; gap: 1rem; flex-wrap: wrap;
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+  color: #fff; border-radius: 16px; padding: 1.1rem 1.35rem; margin: 0.75rem 0 1rem;
+  box-shadow: 0 4px 20px rgba(15,23,42,0.18);
+}
+.snapshot-avatar {
+  width: 56px; height: 56px; border-radius: 50%; background: rgba(255,255,255,0.15);
+  display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.15rem;
+  flex-shrink: 0; border: 2px solid rgba(255,255,255,0.25);
+}
+.snapshot-main { flex: 1; min-width: 200px; }
+.snapshot-main h3 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+.snapshot-tagline { margin: 0.25rem 0 0.65rem; font-size: 0.88rem; opacity: 0.85; line-height: 1.45; }
+.snapshot-metrics { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.snapshot-metric {
+  background: rgba(255,255,255,0.12); border-radius: 8px; padding: 0.35rem 0.65rem;
+  font-size: 0.78rem; white-space: nowrap;
+}
+.snapshot-metric strong { display: block; font-size: 0.95rem; font-weight: 700; margin-top: 0.1rem; }
+.snapshot-empty { color: #64748b; text-align: center; padding: 1.25rem; font-size: 0.92rem;
+  background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 14px; margin: 0.75rem 0 1rem; }
+.demo-scenario-hint { font-size: 0.88rem; color: #64748b; margin: 0.35rem 0 0.75rem; line-height: 1.5; }
 """
 
 DEMO_FLOW = """
@@ -71,145 +116,139 @@ DEMO_FLOW = """
 9. **MFI Portal** (http://localhost:5174) → deployment architecture §C.4
 """
 
+CHART_COLORS = ["#0284c7", "#059669", "#d97706", "#7c3aed", "#db2777"]
+CHART_LAYOUT = dict(
+    paper_bgcolor="rgba(0,0,0,0)",
+    plot_bgcolor="#f8fafc",
+    font=dict(size=14, family="Inter, system-ui, sans-serif", color="#0f172a"),
+    margin=dict(l=56, r=32, t=88, b=72),
+    title=dict(font=dict(size=17), x=0.5, xanchor="center"),
+    legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="center", x=0.5, font=dict(size=13)),
+)
+
+OVERVIEW_SCRIPT = """
+<div class="presentation-script">
+  <h4>Presentation script — Overview tab</h4>
+  <p>Good morning. This dissertation addresses a core barrier to financial inclusion in Zimbabwe: roughly <strong>89 percent</strong> of adults lack access to formal credit, largely because they have no traditional credit bureau history.</p>
+  <p>My aim is to develop and evaluate a <strong>LoRA-enhanced credit scoring system</strong> that uses alternative data — mobile money, utility payments, and digital behaviour — instead of conventional bureau records.</p>
+  <p>The work is organised around <strong>five objectives</strong>: building a synthetic alternative-data framework; implementing LoRA scoring; measuring computational efficiency; assessing fairness across gender, location, age, income, and MSME status; and aligning recommendations with NDS1, NDS2, and the National AI Strategy.</p>
+  <p>Research questions RQ1 through RQ4 map directly to the tabs in this demo — dataset design, LoRA performance, fairness, and policy alignment.</p>
+</div>
+"""
+
+LIVE_DEMO_SCRIPT = """
+<div class="presentation-script">
+  <h4>Presentation script — Live Demo tab</h4>
+  <p>I start with a <strong>demo scenario</strong> — for example a rural MSME woman — which narrows the pool to applicants aligned with NDS inclusion targets. The dropdown then lists real individuals from the synthetic dataset; each label shows gender, age, location, and mobile-money provider at a glance.</p>
+  <p>The <strong>selected applicant preview</strong> card summarises the three signals an MFI officer cares about before scoring: mobile money activity, utility payment consistency, and digital engagement. The full profile below adds detail if the panel asks.</p>
+  <p>When I click <strong>Check credit score</strong>, the LoRA model returns a score on the 300-to-850 scale, a default probability, and the top feature drivers for this individual — supporting both the lending decision and regulatory explainability.</p>
+</div>
+"""
+
+DATASET_SCRIPT = """
+<div class="presentation-script">
+  <h4>Presentation script — Dataset tab</h4>
+  <p>Objective 1 required a dataset that mirrors Zimbabwe's alternative-data landscape without exposing real customer records. I built a <strong>synthetic framework</strong> with mobile money transactions, utility and airtime consistency, digital commerce signals, and demographic attributes including gender, location, youth status, and MSME classification.</p>
+  <p>The table below shows sample rows. The default rate reflects the class imbalance typical of credit portfolios — most applicants repay, but the model must still identify higher-risk cases.</p>
+  <p>This synthetic approach lets me test methodology and fairness metrics before real fintech partnerships are in place — which aligns with the regulatory sandbox recommendations in Chapter 6.</p>
+</div>
+"""
+
+POLICY_SCRIPT = """
+<div class="presentation-script">
+  <h4>Presentation script — Policy tab</h4>
+  <p>Objective 5 connects the technical work to national priorities. For <strong>financial institutions</strong>, the recommendation is to partner with EcoCash and OneMoney for consented data access, deploy LoRA adapters on modest hardware, and publish explainability summaries for applicants.</p>
+  <p>For <strong>policymakers and the Reserve Bank</strong>, I recommend regulatory sandboxes for alternative-data pilots, routine fairness monitoring by gender and geography, and investment in shared credit infrastructure.</p>
+  <p>For <strong>researchers</strong>, the next step is validating these findings on real Zimbabwe fintech data and extending LoRA rank sensitivity analysis — both outlined in the appendices.</p>
+  <p>Together, these measures support NDS targets on financial inclusion above 90 percent, MSME credit access, and responsible AI deployment.</p>
+</div>
+"""
+
+
+def _presentation_script(title: str, paragraphs: list[str]) -> str:
+    body = "".join(f"<p>{p}</p>" for p in paragraphs)
+    return f'<div class="presentation-script"><h4>{title}</h4>{body}</div>'
+
+
+def _human_feature(name: str) -> str:
+    labels = {
+        "mm_txn_per_month": "Mobile money transactions / month",
+        "mm_balance_volatility": "Mobile money balance volatility",
+        "mm_weekend_usage_pct": "Weekend mobile money usage",
+        "utility_payment_rate": "Utility payment rate",
+        "util_water_consistency": "Water bill consistency",
+        "util_electricity_consistency": "Electricity bill consistency",
+        "airtime_consistency_score": "Airtime purchase consistency",
+        "account_age_months": "Account age (months)",
+        "is_urban": "Urban location",
+        "age_group": "Age group",
+        "social_media_usage": "Social media usage",
+    }
+    if name in labels:
+        return labels[name]
+    return name.replace("_", " ").title()
+
+
+def _apply_chart_style(fig, height: int = 420, y_title: str = "Score") -> go.Figure:
+    fig.update_layout(height=height, **CHART_LAYOUT)
+    fig.update_xaxes(tickfont=dict(size=13), title_font=dict(size=14), gridcolor="#e2e8f0", linecolor="#cbd5e1")
+    fig.update_yaxes(
+        tickfont=dict(size=13), title=y_title, title_font=dict(size=14),
+        gridcolor="#e2e8f0", linecolor="#cbd5e1", zerolinecolor="#e2e8f0",
+    )
+    return fig
+
 
 def _load_demo_dataframe() -> pd.DataFrame:
-    """Load applicant dataset once for the Live Demo tab."""
-    dataset_name = "zimbabwe_synthetic"
-    if Path("models/dataset_name.txt").exists():
-        dataset_name = Path("models/dataset_name.txt").read_text().strip()
-    from src.data import load_dataset
-    return load_dataset(dataset_name)
+    return load_demo_dataframe()
 
 
-def _fmt(value, suffix="") -> str:
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return "—"
-    if isinstance(value, float):
-        return f"{value:.1f}{suffix}" if abs(value) < 1000 else f"{value:,.0f}{suffix}"
-    if isinstance(value, (int, np.integer)):
-        if value in (0, 1) and suffix == "":
-            return "Yes" if value == 1 else "No"
-        return f"{value}{suffix}"
-    text = str(value).strip()
-    return text.replace("_", " ").title() if text else "—"
-
-
-def _applicant_choice_label(row: pd.Series, idx: int) -> str:
-    gender = _fmt(row.get("gender"))
-    age = _fmt(row.get("age"))
-    location = _fmt(row.get("location"))
-    msme = "MSME" if row.get("msme") == 1 else "Individual"
-    provider = _fmt(row.get("mm_provider"))
-    return f"Applicant {idx + 1} — {gender}, {age} yrs · {location} · {msme} · {provider}"
-
-
-def _filter_applicant_indices(df: pd.DataFrame, gender: str, location: str, msme: str) -> np.ndarray:
-    mask = pd.Series(True, index=df.index)
-    if gender != "All":
-        mask &= df["gender"].astype(str).str.lower() == gender.lower()
-    if location != "All":
-        mask &= df["location"].astype(str).str.lower() == location.lower()
-    if msme == "MSME":
-        mask &= df["msme"] == 1
-    elif msme == "Non-MSME":
-        mask &= df["msme"] == 0
-    return df.index[mask].to_numpy()
-
-
-def _build_profile_html(row: pd.Series, idx: int) -> str:
-    badges = [
-        _fmt(row.get("gender")),
-        f"{_fmt(row.get('age'))} yrs" if pd.notna(row.get("age")) else None,
-        _fmt(row.get("location")),
-        "MSME" if row.get("msme") == 1 else "Individual",
-        _fmt(row.get("region")) if pd.notna(row.get("region")) else None,
-    ]
-    badge_html = "".join(f'<span class="profile-badge">{b}</span>' for b in badges if b and b != "—")
-
-    def block(title: str, rows: list) -> str:
-        items = "".join(
-            f'<div class="profile-row"><span>{label}</span><span>{value}</span></div>'
-            for label, value in rows
-        )
-        return f'<div class="profile-block"><h4>{title}</h4>{items}</div>'
-
-    sections = [
-        block("Personal", [
-            ("Education", _fmt(row.get("education"))),
-            ("Employment", _fmt(row.get("employment"))),
-            ("Sector", _fmt(row.get("sector"))),
-            ("Household size", _fmt(row.get("household_size"))),
-            ("Youth (≤35)", _fmt(row.get("youth"))),
-        ]),
-        block("Mobile money", [
-            ("Provider", _fmt(row.get("mm_provider"))),
-            ("Transactions / month", _fmt(row.get("mm_txn_per_month"))),
-            ("Avg. transaction", f"${_fmt(row.get('mm_avg_txn_usd'))}"),
-            ("Tenure (months)", _fmt(row.get("mm_tenure_months"))),
-            ("Bill payment ratio", _fmt(row.get("mm_bill_payment_ratio"))),
-        ]),
-        block("Utilities & telecom", [
-            ("Utility payment rate", _fmt(row.get("utility_payment_rate"))),
-            ("Electricity consistency", _fmt(row.get("util_electricity_consistency"))),
-            ("Water consistency", _fmt(row.get("util_water_consistency"))),
-            ("Overdue bills", _fmt(row.get("util_overdue_count"))),
-            ("Airtime consistency", _fmt(row.get("airtime_consistency_score"))),
-        ]),
-        block("Digital & behaviour", [
-            ("Smartphone", _fmt(row.get("has_smartphone"))),
-            ("Digital engagement", _fmt(row.get("digital_engagement"))),
-            ("App sessions / week", _fmt(row.get("app_sessions_per_week"))),
-            ("Account age (months)", _fmt(row.get("account_age_months"))),
-            ("On-time streak", _fmt(row.get("consecutive_on_time"))),
-        ]),
-    ]
-
-    return f"""
-    <div class="profile-card">
-      <div class="profile-header">
-        <div>
-          <h3>Applicant profile</h3>
-          <p style="margin:0.35rem 0 0; color:#64748b; font-size:0.9rem;">Review alternative-data signals before running the credit check.</p>
-        </div>
-        <div style="text-align:right;">
-          <div style="font-size:0.8rem; color:#64748b;">Record</div>
-          <div style="font-size:1.1rem; font-weight:700; color:#0f172a;">#{idx + 1}</div>
-        </div>
-      </div>
-      <div style="margin-bottom:1rem;">{badge_html}</div>
-      <div class="profile-grid">{''.join(sections)}</div>
-    </div>
-    """
-
-
-def get_applicant_choices(gender: str, location: str, msme: str):
-    """Populate the applicant dropdown from simple filters."""
+def get_applicant_choices(
+    gender: str,
+    location: str,
+    msme: str,
+    scenario_key: str = "browse_all",
+):
+    """Populate the applicant dropdown from filters and optional demo scenario."""
     try:
-        df = _load_demo_dataframe()
+        choices, first_id, snapshot, profile = resolve_applicant_list(
+            gender, location, msme, scenario_key,
+        )
     except Exception as e:
-        return gr.Dropdown(choices=[], value=None, label="Select applicant"), f"Could not load dataset: {e}"
-
-    indices = _filter_applicant_indices(df, gender, location, msme)
-    if len(indices) == 0:
-        return gr.Dropdown(choices=[], value=None, label="Select applicant"), (
-            '<div class="profile-card"><p style="margin:0;color:#64748b;">No applicants match these filters. Try broader options.</p></div>'
+        return (
+            gr.Dropdown(choices=[], value=None, label="Choose applicant"),
+            empty_snapshot(f"Could not load dataset: {e}"),
+            '<div class="profile-card"><p style="margin:0;color:#64748b;">Dataset unavailable.</p></div>',
         )
 
-    choices = [(_applicant_choice_label(df.loc[i], i), str(i)) for i in indices[:400]]
-    first_id = choices[0][1]
-    profile = _build_profile_html(df.loc[int(first_id)], int(first_id))
-    note = f"Showing {len(choices):,} of {len(indices):,} matching applicants."
-    if len(indices) > 400:
-        note += " Narrow filters to see a shorter list."
-    return gr.Dropdown(choices=choices, value=first_id, label="Select applicant", filterable=True), profile + f'<p style="margin:0.75rem 0 0; color:#64748b; font-size:0.85rem;">{note}</p>'
+    if not choices:
+        return (
+            gr.Dropdown(choices=[], value=None, label="Choose applicant"),
+            snapshot,
+            profile,
+        )
+
+    return (
+        gr.Dropdown(choices=choices, value=first_id, label="Choose applicant", filterable=True),
+        snapshot,
+        profile,
+    )
+
+
+def apply_demo_scenario(scenario_key: str):
+    """Set filters from a curated demo scenario and reload the applicant list."""
+    gender, location, msme, hint = apply_demo_scenario_filters(scenario_key)
+    dropdown, snapshot, profile = get_applicant_choices(gender, location, msme, scenario_key)
+    return gender, location, msme, dropdown, snapshot, profile, hint
 
 
 def show_applicant_profile(applicant_id: str):
-    """Load profile only — no model inference yet."""
+    """Load snapshot and full profile — no model inference yet."""
     if not applicant_id:
         return (
-            '<div class="profile-card"><p style="margin:0;color:#64748b;">Choose an applicant from the list above.</p></div>',
-            "Select an applicant to enable scoring.",
+            empty_snapshot(),
+            '<div class="profile-card"><p style="margin:0;color:#64748b;">Choose an applicant from the dropdown above.</p></div>',
+            "Select an applicant, review the preview, then run the credit check.",
             None,
             "",
         )
@@ -219,38 +258,60 @@ def show_applicant_profile(applicant_id: str):
         row = df.iloc[idx]
     except Exception:
         return (
+            empty_snapshot("Applicant not found."),
             '<div class="profile-card"><p style="margin:0;color:#64748b;">Applicant not found.</p></div>',
             "Select an applicant to enable scoring.",
             None,
             "",
         )
     return (
-        _build_profile_html(row, idx),
-        "Profile loaded. Click **Check credit score** when ready.",
+        build_applicant_snapshot(row, idx),
+        build_profile_html(row, idx),
+        "Preview loaded. Click **Check credit score** when ready.",
         None,
         "",
     )
 
 
-def pick_random_applicant(gender: str, location: str, msme: str):
+def pick_random_applicant(
+    gender: str,
+    location: str,
+    msme: str,
+    scenario_key: str = "browse_all",
+):
     """Pick a random applicant from the current filter — useful for panel demos."""
+    extra = scenario_extra_filter(scenario_key)
     try:
         df = _load_demo_dataframe()
     except Exception as e:
-        return None, f"Could not load dataset: {e}", "Select an applicant to enable scoring.", None, ""
+        return (
+            None,
+            empty_snapshot(str(e)),
+            '<div class="profile-card"><p style="margin:0;color:#64748b;">Dataset unavailable.</p></div>',
+            "Select an applicant to enable scoring.",
+            None,
+            "",
+        )
 
-    indices = _filter_applicant_indices(df, gender, location, msme)
+    indices = filter_applicant_indices(df, gender, location, msme, extra)
     if len(indices) == 0:
-        return None, (
-            '<div class="profile-card"><p style="margin:0;color:#64748b;">No applicants match these filters.</p></div>'
-        ), "Select an applicant to enable scoring.", None, ""
+        return (
+            None,
+            empty_snapshot("No applicants match."),
+            '<div class="profile-card"><p style="margin:0;color:#64748b;">No applicants match these filters.</p></div>',
+            "Select an applicant to enable scoring.",
+            None,
+            "",
+        )
 
     idx = int(np.random.choice(indices))
-    choices = [(_applicant_choice_label(df.loc[i], i), str(i)) for i in indices[:400]]
+    choices = [(applicant_choice_label(df.loc[i], i), str(i)) for i in indices[:400]]
+    row = df.loc[idx]
     return (
-        gr.Dropdown(choices=choices, value=str(idx), label="Select applicant", filterable=True),
-        _build_profile_html(df.loc[idx], idx),
-        "Profile loaded. Click **Check credit score** when ready.",
+        gr.Dropdown(choices=choices, value=str(idx), label="Choose applicant", filterable=True),
+        build_applicant_snapshot(row, idx),
+        build_profile_html(row, idx),
+        "Preview loaded. Click **Check credit score** when ready.",
         None,
         "",
     )
@@ -259,13 +320,14 @@ def pick_random_applicant(gender: str, location: str, msme: str):
 def run_credit_score(applicant_id: str):
     """Run LoRA inference after the user has reviewed the applicant profile."""
     if not applicant_id:
-        return "Select an applicant and review their profile first.", None, ""
+        return "Select an applicant and review their profile first.", None, "", ""
 
     out = load_model_and_prep()
     if out[0] is None:
         return (
             "⚠️ **Train models first**\n\n```bash\npython scripts/train.py --dataset zimbabwe_synthetic\n```",
             None,
+            "",
             "",
         )
 
@@ -274,10 +336,10 @@ def run_credit_score(applicant_id: str):
     try:
         result = score_applicant_row(int(applicant_id), artifacts=out[:3])
     except ValueError as e:
-        return f"⚠️ **Model out of date** — retrain to match current features.\n\n`{e}`", None, ""
+        return f"⚠️ **Model out of date** — retrain to match current features.\n\n`{e}`", None, "", ""
 
     if result is None:
-        return "⚠️ **Could not score applicant.**", None, ""
+        return "⚠️ **Could not score applicant.**", None, "", ""
 
     proba = result["default_probability"]
     score = result["score"]
@@ -285,36 +347,65 @@ def run_credit_score(applicant_id: str):
     risk_color = "#10b981" if proba < 0.3 else "#f59e0b" if proba < 0.6 else "#ef4444"
 
     fig = go.Figure(go.Indicator(
-        mode="gauge+number",
+        mode="gauge+number+delta",
         value=score,
-        title={"text": "Credit Score (300–850)"},
+        title={"text": "Credit Score (300–850)", "font": {"size": 16}},
         gauge={
-            "axis": {"range": [300, 850], "tickwidth": 1},
-            "bar": {"color": "#0ea5e9"},
+            "axis": {"range": [300, 850], "tickwidth": 2, "tickmode": "linear", "dtick": 100, "tickfont": {"size": 12}},
+            "bar": {"color": "#0284c7", "thickness": 0.28},
             "steps": [
-                {"range": [300, 580], "color": "#fef2f2"},
-                {"range": [580, 670], "color": "#fef9c3"},
-                {"range": [670, 850], "color": "#dcfce7"},
+                {"range": [300, 580], "color": "#fecaca"},
+                {"range": [580, 670], "color": "#fde68a"},
+                {"range": [670, 850], "color": "#bbf7d0"},
             ],
-            "threshold": {"line": {"color": risk_color, "width": 3}, "thickness": 0.85, "value": score},
+            "threshold": {"line": {"color": risk_color, "width": 4}, "thickness": 0.85, "value": score},
         },
-        number={"suffix": "", "font": {"size": 36}},
+        number={"suffix": " / 850", "font": {"size": 42, "color": "#0f172a"}},
     ))
-    fig.update_layout(height=260, margin=dict(l=25, r=25, t=50, b=25), paper_bgcolor="rgba(0,0,0,0)", font=dict(family="Inter, system-ui, sans-serif"))
+    fig.update_layout(
+        height=320,
+        margin=dict(l=40, r=40, t=70, b=30),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Inter, system-ui, sans-serif", size=14),
+    )
+    fig.add_annotation(
+        x=0.5, y=-0.08, xref="paper", yref="paper", showarrow=False,
+        text="<b>Red zone</b> 300–580 · <b>Amber</b> 580–670 · <b>Green</b> 670–850",
+        font=dict(size=12, color="#64748b"),
+    )
 
     explain = ""
     top = result.get("top_drivers") or []
+    driver_lines = []
     if top:
         parts = []
         for t in top[:4]:
-            feat = t.get("feature", "")
+            feat = _human_feature(t.get("feature", ""))
             direction = t.get("direction", "")
             impact = t.get("impact", t.get("importance", 0))
             parts.append(f"*{feat}* ({direction}, Δ{abs(float(impact)):.3f})")
+            driver_lines.append(
+                f"<strong>{feat}</strong> pushes the score {direction.lower()} "
+                f"(impact {abs(float(impact)):.3f})."
+            )
         explain = "**LoRA drivers for this applicant:** " + " → ".join(parts)
 
     result_text = f"### {risk}\n**Default probability:** {proba:.1%}  |  **Score:** {score}"
-    return result_text, fig, explain
+
+    risk_word = "low" if proba < 0.3 else "medium" if proba < 0.6 else "high"
+    script = _presentation_script(
+        "Presentation script — this applicant's score",
+        [
+            f"The model assigns a credit score of <strong>{score}</strong> out of 850, "
+            f"with a default probability of <strong>{proba:.1%}</strong>. "
+            f"That places this applicant in the <strong>{risk_word} risk</strong> band.",
+            "The gauge uses the same colour logic a panel would expect: red below 580, amber up to 670, and green above that.",
+        ] + (driver_lines[:3] if driver_lines else [
+            "The top feature drivers show which alternative-data signals most influenced this decision — "
+            "supporting both the loan officer and regulatory explainability requirements."
+        ]),
+    )
+    return result_text, fig, explain, script
 
 
 def load_model_and_prep():
@@ -334,32 +425,36 @@ def load_model_and_prep():
 def model_comparison():
     path = Path("results/metrics/training_results.json")
     if not path.exists():
-        return None, "", "Run training first: `python scripts/train.py`"
+        return None, "", "Run training first: `python scripts/train.py`", ""
 
     with open(path) as f:
         r = json.load(f)
 
     lora = r.get("lora", {})
+    pct = 100 * lora.get("trainable_params", 0) / max(lora.get("total_params", 1), 1) if lora else 0
     cards_html = ""
     if lora:
-        pct = 100 * lora.get("trainable_params", 0) / max(lora.get("total_params", 1), 1)
         cards_html = f"""
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
-          <div style="background: linear-gradient(145deg,#f8fafc,#f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #0ea5e9;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
+          <div style="background: linear-gradient(145deg,#f8fafc,#f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #0284c7;">
             <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">AUC-ROC</div>
-            <div style="font-size:1.5rem; font-weight:700;">{lora.get('auc_roc', 0):.3f}</div>
+            <div style="font-size:1.6rem; font-weight:700;">{lora.get('auc_roc', 0):.3f}</div>
+            <div style="font-size:0.75rem; color:#64748b;">Ranking ability (0–1)</div>
           </div>
-          <div style="background: linear-gradient(145deg,#f8fafc,#f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #10b981;">
+          <div style="background: linear-gradient(145deg,#f8fafc,#f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #059669;">
             <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">AUC-PR</div>
-            <div style="font-size:1.5rem; font-weight:700;">{lora.get('auc_pr', 0):.3f}</div>
+            <div style="font-size:1.6rem; font-weight:700;">{lora.get('auc_pr', 0):.3f}</div>
+            <div style="font-size:0.75rem; color:#64748b;">Imbalanced defaults</div>
           </div>
-          <div style="background: linear-gradient(145deg,#f8fafc,#f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #f59e0b;">
+          <div style="background: linear-gradient(145deg,#f8fafc,#f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #d97706;">
             <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">F1</div>
-            <div style="font-size:1.5rem; font-weight:700;">{lora.get('f1', 0):.3f}</div>
+            <div style="font-size:1.6rem; font-weight:700;">{lora.get('f1', 0):.3f}</div>
+            <div style="font-size:0.75rem; color:#64748b;">Precision–recall balance</div>
           </div>
-          <div style="background: linear-gradient(145deg,#f8fafc,#f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #8b5cf6;">
+          <div style="background: linear-gradient(145deg,#f8fafc,#f1f5f9); border-radius: 12px; padding: 1rem; border-left: 4px solid #7c3aed;">
             <div style="font-size:0.75rem; color:#64748b; text-transform:uppercase;">Params trained</div>
-            <div style="font-size:1.5rem; font-weight:700;">~{pct:.1f}%</div>
+            <div style="font-size:1.6rem; font-weight:700;">~{pct:.1f}%</div>
+            <div style="font-size:0.75rem; color:#64748b;">LoRA efficiency</div>
           </div>
         </div>
         """
@@ -367,11 +462,19 @@ def model_comparison():
     rows = [{"Model": k.replace("_", " ").title(), "AUC-ROC": v["auc_roc"], "AUC-PR": v.get("auc_pr", 0), "F1": v["f1"]} for k, v in r.items()]
     df = pd.DataFrame(rows)
     y_cols = [c for c in ["AUC-ROC", "AUC-PR", "F1"] if c in df.columns]
-    fig = px.bar(df, x="Model", y=y_cols, barmode="group",
-                 color_discrete_sequence=["#0ea5e9", "#10b981", "#f59e0b"][:len(y_cols)],
-                 title="Model Comparison (§3.6.1, §4.4.4)")
-    fig.update_layout(height=340, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(248,250,252,0.9)", font=dict(size=12),
-                      xaxis_tickangle=-15, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    fig = px.bar(
+        df, x="Model", y=y_cols, barmode="group",
+        color_discrete_sequence=CHART_COLORS[:len(y_cols)],
+        title="Model comparison — LoRA vs baselines",
+        labels={"value": "Score (0–1)", "variable": "Metric"},
+        text_auto=".3f",
+    )
+    fig.update_traces(textfont_size=12, textposition="outside", cliponaxis=False)
+    _apply_chart_style(fig, height=440, y_title="Score (0 = worst, 1 = best)")
+    fig.update_layout(
+        xaxis_title="Model",
+        yaxis=dict(range=[0, min(1.08, df[y_cols].max().max() * 1.15 + 0.05)]),
+    )
 
     eff = ""
     if lora and "trainable_params" in lora:
@@ -383,47 +486,112 @@ def model_comparison():
             f"Peak memory: {lora.get('peak_memory_mb', '—')} MB"
         )
 
-    return fig, cards_html, eff
+    best_auc = df.loc[df["AUC-ROC"].idxmax(), "Model"]
+    best_auc_val = df["AUC-ROC"].max()
+    lora_row = df[df["Model"] == "Lora"]
+    lora_auc = lora_row["AUC-ROC"].iloc[0] if len(lora_row) else 0
+    lora_f1 = lora_row["F1"].iloc[0] if len(lora_row) else 0
+    script = _presentation_script(
+        "Presentation script — Results chart",
+        [
+            "This grouped bar chart compares four models on three standard credit-scoring metrics, all on a zero-to-one scale.",
+            "<strong>AUC-ROC</strong> measures how well each model ranks risky applicants above safe ones. "
+            "<strong>AUC-PR</strong> is more informative when defaults are rare. "
+            "<strong>F1</strong> balances precision and recall at the chosen threshold.",
+            f"In this run, <strong>{best_auc}</strong> achieves the highest AUC-ROC at <strong>{best_auc_val:.3f}</strong>. "
+            f"LoRA scores <strong>{lora_auc:.3f}</strong> on AUC-ROC and <strong>{lora_f1:.3f}</strong> on F1 — "
+            "the key point for Objective 3 is that this performance is reached while training only about "
+            f"<strong>{pct:.1f}%</strong> of model parameters, which matters for deployment on modest MFI hardware.",
+        ],
+    )
+    return fig, cards_html, eff, script
 
 
 def efficiency_dashboard():
     path = Path("results/metrics/training_results.json")
     if not path.exists():
-        return None, "Run training first: `python scripts/train.py`"
+        return None, "Run training first: `python scripts/train.py`", ""
 
     with open(path) as f:
         r = json.load(f)
     lora = r.get("lora", {})
     if not lora:
-        return None, "LoRA results not found."
+        return None, "LoRA results not found.", ""
 
-    labels = ["Trainable params (M)", "Training time (min)", "Inference (ms)", "Peak memory (MB)"]
-    values = [
-        lora.get("trainable_params", 0) / 1e6,
-        lora.get("train_time_sec", 0) / 60,
-        lora.get("inference_latency_ms", 0),
-        lora.get("peak_memory_mb", 0),
-    ]
-    fig = go.Figure(go.Bar(x=labels, y=values, marker_color=["#8b5cf6", "#0ea5e9", "#10b981", "#f59e0b"]))
-    fig.update_layout(
-        title="Computational Efficiency — Objective 3 (§3.6.2, §4.4.6)",
-        height=340,
-        paper_bgcolor="rgba(0,0,0,0)",
-        yaxis_title="Value",
+    trainable = lora.get("trainable_params", 0)
+    total = lora.get("total_params", 1)
+    frozen = max(total - trainable, 0)
+    pct = 100 * trainable / max(total, 1)
+    train_min = lora.get("train_time_sec", 0) / 60
+    infer_ms = lora.get("inference_latency_ms", 0)
+    peak_mb = lora.get("peak_memory_mb", 0)
+
+    fig = make_subplots(
+        rows=1, cols=2,
+        column_widths=[0.42, 0.58],
+        specs=[[{"type": "pie"}, {"type": "bar"}]],
+        subplot_titles=("Parameters trained vs frozen", "Runtime metrics (actual values labelled)"),
     )
-    pct = 100 * lora.get("trainable_params", 0) / max(lora.get("total_params", 1), 1)
+    fig.add_trace(
+        go.Pie(
+            labels=["Trainable (LoRA)", "Frozen (pre-trained)"],
+            values=[trainable, frozen],
+            marker=dict(colors=["#0284c7", "#cbd5e1"]),
+            textinfo="label+percent",
+            textfont=dict(size=13),
+            hole=0.45,
+        ),
+        row=1, col=1,
+    )
+    metric_labels = ["Training time (min)", "Inference (ms)", "Peak memory (MB)"]
+    metric_values = [train_min, infer_ms, peak_mb]
+    metric_text = [f"{train_min:.1f} min", f"{infer_ms:.1f} ms", f"{peak_mb:.2f} MB"]
+    fig.add_trace(
+        go.Bar(
+            x=metric_labels, y=metric_values,
+            marker_color=["#7c3aed", "#059669", "#d97706"],
+            text=metric_text, textposition="outside", textfont=dict(size=13),
+            cliponaxis=False,
+        ),
+        row=1, col=2,
+    )
+    fig.update_layout(
+        height=420,
+        title=dict(text="Computational efficiency — Objective 3", x=0.5, xanchor="center", font=dict(size=17)),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#f8fafc",
+        font=dict(size=14, family="Inter, system-ui, sans-serif"),
+        margin=dict(l=40, r=40, t=90, b=60),
+        showlegend=False,
+    )
+    fig.update_yaxes(title_text="Value (see bar labels for units)", row=1, col=2, gridcolor="#e2e8f0")
+    fig.update_xaxes(tickangle=-12, row=1, col=2)
+
     note = (
-        f"**Objective 3:** LoRA trains only **~{pct:.1f}%** of parameters while maintaining competitive AUC. "
-        f"Inference latency **{lora.get('inference_latency_ms', '—')} ms** per applicant supports "
+        f"**Objective 3:** LoRA trains only **~{pct:.1f}%** of parameters ({trainable:,} of {total:,}) "
+        f"while maintaining competitive AUC. Inference latency **{infer_ms:.1f} ms** per applicant supports "
         f"real-time MFI deployment in resource-constrained settings."
     )
-    return fig, note
+    script = _presentation_script(
+        "Presentation script — Efficiency charts",
+        [
+            "Objective 3 asks whether LoRA reduces compute without sacrificing scoring quality. "
+            "The donut chart on the left makes the parameter story easy to explain: only the blue slice is updated during fine-tuning; "
+            f"the rest of DistilBERT stays frozen. In this run that is about <strong>{pct:.1f}%</strong> of weights.",
+            f"The bar chart on the right reports three deployment metrics with their real units: "
+            f"training took <strong>{train_min:.1f} minutes</strong>, each inference call takes about "
+            f"<strong>{infer_ms:.1f} milliseconds</strong>, and peak memory was <strong>{peak_mb:.2f} MB</strong>.",
+            "Together, these figures support the claim that the system can run on modest hardware at branch level — "
+            "which is important for MFIs serving rural and peri-urban clients.",
+        ],
+    )
+    return fig, note, script
 
 
 def fairness_dashboard():
     path = Path("results/metrics/fairness_results.json")
     if not path.exists():
-        return None, "Run training first to see fairness metrics (§3.6.3).", None
+        return None, "Run training first to see fairness metrics (§3.6.3).", ""
 
     with open(path) as f:
         data = json.load(f)
@@ -432,51 +600,130 @@ def fairness_dashboard():
     fm = lora.get("fairness_metrics", {})
 
     if not groups:
-        return None, "Use **zimbabwe_synthetic** dataset for gender, location, age, income quartile, MSME subgroups (§3.6.3)."
+        return None, "Use **zimbabwe_synthetic** dataset for gender, location, age, income quartile, MSME subgroups (§3.6.3).", ""
 
-    rows = []
-    for attr, gdata in groups.items():
-        for gname, m in gdata.items():
-            rows.append({"Attribute": attr, "Group": str(gname), "AUC": m.get("auc", 0), "TPR": m.get("tpr", 0)})
-    df = pd.DataFrame(rows)
-    if len(df) == 0:
-        return None, str(lora)
+    attrs = [a for a in groups.keys() if groups[a]]
+    n_attrs = len(attrs)
+    n_cols = 2
+    n_rows = (n_attrs + 1) // 2
+    fig = make_subplots(
+        rows=n_rows, cols=n_cols,
+        subplot_titles=[a.replace("_", " ").title() for a in attrs],
+        vertical_spacing=0.14,
+        horizontal_spacing=0.08,
+    )
+    script_bits = []
+    for i, attr in enumerate(attrs):
+        row, col = i // n_cols + 1, i % n_cols + 1
+        gdata = groups[attr]
+        gnames = [str(g).replace("_", " ").title() for g in gdata.keys()]
+        aucs = [gdata[g].get("auc", 0) for g in gdata.keys()]
+        tprs = [gdata[g].get("tpr", 0) for g in gdata.keys()]
+        fig.add_trace(
+            go.Bar(name="AUC", x=gnames, y=aucs, marker_color="#0284c7",
+                   text=[f"{v:.2f}" for v in aucs], textposition="outside", legendgroup="AUC",
+                   showlegend=(i == 0), offsetgroup="auc"),
+            row=row, col=col,
+        )
+        fig.add_trace(
+            go.Bar(name="TPR", x=gnames, y=tprs, marker_color="#059669",
+                   text=[f"{v:.2f}" for v in tprs], textposition="outside", legendgroup="TPR",
+                   showlegend=(i == 0), offsetgroup="tpr"),
+            row=row, col=col,
+        )
+        auc_spread = max(aucs) - min(aucs) if aucs else 0
+        script_bits.append(
+            f"For <strong>{attr.replace('_', ' ')}</strong>, AUC ranges from "
+            f"<strong>{min(aucs):.2f}</strong> to <strong>{max(aucs):.2f}</strong> "
+            f"(spread {auc_spread:.2f})."
+        )
 
-    fig = px.bar(df, x="Group", y=["AUC", "TPR"], color="Attribute", barmode="group",
-                 color_discrete_sequence=["#0ea5e9", "#10b981", "#f59e0b", "#8b5cf6"],
-                 title="Performance by Protected Group (§3.6.3, §4.4.8)")
-    fig.update_layout(height=340, paper_bgcolor="rgba(0,0,0,0)", xaxis_tickangle=-20, font=dict(size=11))
+    fig.update_layout(
+        height=max(420, 220 * n_rows),
+        title=dict(text="Fairness by protected group — Objective 4", x=0.5, xanchor="center", font=dict(size=17)),
+        barmode="group",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#f8fafc",
+        font=dict(size=13, family="Inter, system-ui, sans-serif"),
+        margin=dict(l=48, r=32, t=100, b=60),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
+    )
+    fig.update_yaxes(title_text="Score (0–1)", range=[0, 1.08], gridcolor="#e2e8f0")
+    fig.add_annotation(
+        x=0.5, y=-0.06, xref="paper", yref="paper", showarrow=False,
+        text="<b>AUC</b> = ranking quality per group · <b>TPR</b> = true positive rate (defaults correctly flagged)",
+        font=dict(size=12, color="#64748b"),
+    )
 
     parts = []
     for kind, d in fm.items():
         if d:
             parts.append(f"**{kind.replace('_', ' ').title()}:** " + " · ".join(f"{k.split('_')[0]}: {v:.3f}" for k, v in list(d.items())[:3]))
-    return fig, "\n\n".join(parts) if parts else "Fairness metrics computed."
+    note = "\n\n".join(parts) if parts else "Fairness metrics computed."
+
+    script = _presentation_script(
+        "Presentation script — Fairness charts",
+        [
+            "Objective 4 examines whether the model performs consistently across protected groups defined in the dissertation: "
+            "gender, location, age band, income quartile, and MSME status.",
+            "Each small chart shows two bars per subgroup. <strong>AUC</strong> tells us whether the model ranks risk equally well within that group. "
+            "<strong>TPR</strong> — true positive rate — shows what fraction of actual defaults the model catches; large gaps here can indicate disparate impact.",
+        ] + script_bits[:4] + [
+            "These results inform mitigation strategies discussed in Chapter 5 — such as threshold adjustment and ongoing monitoring under RBZ oversight."
+        ],
+    )
+    return fig, note, script
 
 
 def explainability_tab():
     path = Path("results/metrics/feature_importance.json")
     if not path.exists():
-        return None, "Run training first. LoRA attribution and RF SHAP computed in §4.4.9."
+        return None, "Run training first. LoRA attribution and RF SHAP computed in §4.4.9.", ""
 
     with open(path) as f:
         data = json.load(f)
     fi = data.get("lora_global_attribution") or data.get("feature_importance") or data.get("shap_importance", [])
     if not fi:
-        return None, "No explainability data."
+        return None, "No explainability data.", ""
 
-    df = pd.DataFrame(fi)
+    df = pd.DataFrame(fi).head(10).copy()
     y_col = "mean_abs_impact" if "mean_abs_impact" in df.columns else (
         "importance" if "importance" in df.columns else "mean_abs_shap"
     )
-    fig = px.bar(df.head(12), x="feature", y=y_col,
-                 color=y_col, color_continuous_scale=["#e0f2fe", "#0ea5e9", "#0369a1"],
-                 title="LoRA Global Feature Attribution — Objective 2 (§4.4.9)")
-    fig.update_layout(height=360, xaxis_tickangle=-35, paper_bgcolor="rgba(0,0,0,0)", showlegend=False)
-    return fig, (
-        "**Live Demo** shows *per-applicant* LoRA drivers. This chart shows aggregate attribution. "
+    df["label"] = df["feature"].map(_human_feature)
+    df = df.sort_values(y_col, ascending=True)
+
+    fig = px.bar(
+        df, x=y_col, y="label", orientation="h",
+        color=y_col, color_continuous_scale=["#bae6fd", "#0284c7", "#075985"],
+        title="Top 10 global feature drivers — LoRA attribution",
+        labels={y_col: "Mean absolute impact", "label": "Feature"},
+        text=df[y_col].map(lambda v: f"{v:.4f}"),
+    )
+    fig.update_traces(textposition="outside", cliponaxis=False)
+    fig.update_layout(showlegend=False, coloraxis_showscale=False, height=460)
+    _apply_chart_style(fig, height=460, y_title="")
+    fig.update_layout(margin=dict(l=180, r=60, t=88, b=60))
+
+    top3 = df.tail(3)["label"].tolist()[::-1]
+    note = (
+        "**Live Demo** shows *per-applicant* LoRA drivers. This chart shows aggregate attribution across the test set. "
         "RF SHAP values are retained for baseline comparison (§4.4.9)."
     )
+    script = _presentation_script(
+        "Presentation script — Explainability chart",
+        [
+            "Regulators and applicants need to understand why a score was assigned. "
+            "This horizontal bar chart ranks the ten features with the largest average impact on LoRA predictions across the evaluation set.",
+            f"The strongest global drivers in this run are <strong>{top3[0]}</strong>, "
+            f"<strong>{top3[1] if len(top3) > 1 else '—'}</strong>, and "
+            f"<strong>{top3[2] if len(top3) > 2 else '—'}</strong> — "
+            "mostly utility consistency, mobile-money behaviour, and location-related signals rather than opaque latent features.",
+            "In the Live Demo tab I complement this aggregate view with per-applicant drivers, "
+            "which is what an MFI officer would see at decision time.",
+        ],
+    )
+    return fig, note, script
 
 
 def dataset_info():
@@ -495,7 +742,12 @@ def dataset_info():
     pct = 100 * defs / n if n else 0
 
     desc = "**Zimbabwe alternative data** (synthetic §3.3): mobile money, utility payments, digital commerce, demographics — **Objective 1**." if dn == "zimbabwe_synthetic" else f"**{dn}** — validation benchmark (§3.3.5)."
-    summary = f"{desc}\n\n**{n:,}** samples  ·  **{defs:,}** defaults ({pct:.1f}%)  ·  **{len(df.columns)-1}** features"
+    script = DATASET_SCRIPT.replace(
+        "The table below shows sample rows.",
+        f"The table below shows sample rows from <strong>{n:,}</strong> synthetic applicants, "
+        f"including <strong>{defs:,}</strong> simulated defaults ({pct:.1f}%).",
+    )
+    summary = f"{desc}\n\n**{n:,}** samples  ·  **{defs:,}** defaults ({pct:.1f}%)  ·  **{len(df.columns)-1}** features\n\n{script}"
     table_html = df.head(40).to_html(classes="table-auto", index=False)
     table = f'<div style="overflow-x:auto; overflow-y:auto; max-height:400px; max-width:100%;">{table_html}</div>'
     return summary, table
@@ -537,11 +789,16 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
     </div>
     """)
 
-    with gr.Accordion("📋 Demo guide for panel", open=False):
+    with gr.Accordion("🎤 Presentation scripts — read aloud while practising", open=True):
+        gr.Markdown(
+            "Each tab includes a **yellow script box** with wording you can read during the panel demo. "
+            "Chart tabs also generate a **dynamic script** after you click the view button, using your trained model numbers."
+        )
         gr.Markdown(DEMO_FLOW)
 
     with gr.Tabs() as tabs:
         with gr.TabItem("📋 Overview"):
+            gr.HTML(OVERVIEW_SCRIPT)
             gr.Markdown("""
             ### Research aim (§1.5)
             Develop and evaluate a **LoRA-enhanced alternative data credit scoring system** that expands financial inclusion in Zimbabwe while maintaining computational efficiency, fairness, and NDS alignment.
@@ -568,11 +825,24 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
             """)
 
         with gr.TabItem("🔮 Live Demo"):
+            gr.HTML(LIVE_DEMO_SCRIPT)
             gr.Markdown(
-                "Walk through a realistic credit inquiry: **find an applicant → review their profile → run the LoRA score**."
+                "Walk through a realistic credit inquiry: **pick a scenario → choose an applicant → preview → run the LoRA score**."
             )
 
-            gr.Markdown('<p class="demo-step">Step 1 · Find an applicant</p>')
+            gr.Markdown('<p class="demo-step">Step 1 · Demo scenario</p>')
+            scenario_select = gr.Dropdown(
+                choices=[(v["label"], k) for k, v in DEMO_SCENARIOS.items()],
+                value="browse_all",
+                label="Presentation scenario",
+                info="Curated groups for the panel — auto-fills filters below",
+            )
+            scenario_hint = gr.Markdown(
+                DEMO_SCENARIOS["browse_all"]["hint"],
+                elem_classes=["demo-scenario-hint"],
+            )
+
+            gr.Markdown('<p class="demo-step">Step 2 · Refine & choose applicant</p>')
             with gr.Row():
                 filter_gender = gr.Dropdown(
                     ["All", "Female", "Male"], value="All", label="Gender", scale=1,
@@ -585,100 +855,114 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
                 )
             with gr.Row():
                 applicant_select = gr.Dropdown(
-                    label="Select applicant",
+                    label="Choose applicant",
                     choices=[],
                     filterable=True,
-                    scale=3,
+                    info="Type to search — each row shows key alternative-data signals",
+                    scale=4,
                 )
-                random_btn = gr.Button("Pick random", scale=1)
-                apply_filters_btn = gr.Button("Apply filters", variant="secondary", scale=1)
+                random_btn = gr.Button("🎲 Random", scale=1)
 
-            gr.Markdown('<p class="demo-step">Step 2 · Review applicant details</p>')
+            gr.Markdown('<p class="demo-step">Step 3 · Selected applicant preview</p>')
+            snapshot_out = gr.HTML(empty_snapshot())
+
+            gr.Markdown('<p class="demo-step">Step 4 · Full profile (optional detail)</p>')
             profile_out = gr.HTML(
-                '<div class="profile-card"><p style="margin:0;color:#64748b;">Use the filters above, then choose an applicant to load their profile.</p></div>'
+                '<div class="profile-card"><p style="margin:0;color:#64748b;">Select a scenario and applicant to load their profile.</p></div>'
             )
 
-            gr.Markdown('<p class="demo-step">Step 3 · Run credit check</p>')
-            score_hint = gr.Markdown("*Review the profile first, then run the credit check.*")
+            gr.Markdown('<p class="demo-step">Step 5 · Run credit check</p>')
+            score_hint = gr.Markdown("*Review the preview, then run the credit check.*")
             with gr.Row():
                 with gr.Column(scale=1):
                     score_btn = gr.Button("Check credit score", variant="primary", size="lg")
                     out_text = gr.Markdown()
                     out_explain = gr.Markdown()
                 with gr.Column(scale=1):
-                    out_plot = gr.Plot()
+                    out_plot = gr.Plot(label="Credit score gauge")
+            score_script = gr.HTML("")
+
+            filter_inputs = [filter_gender, filter_location, filter_msme, scenario_select]
 
             demo.load(
                 get_applicant_choices,
-                [filter_gender, filter_location, filter_msme],
-                [applicant_select, profile_out],
+                filter_inputs,
+                [applicant_select, snapshot_out, profile_out],
             )
-            apply_filters_btn.click(
-                get_applicant_choices,
-                [filter_gender, filter_location, filter_msme],
-                [applicant_select, profile_out],
+            scenario_select.change(
+                apply_demo_scenario,
+                scenario_select,
+                [filter_gender, filter_location, filter_msme, applicant_select, snapshot_out, profile_out, scenario_hint],
             )
-            filter_gender.change(
-                get_applicant_choices,
-                [filter_gender, filter_location, filter_msme],
-                [applicant_select, profile_out],
-            )
-            filter_location.change(
-                get_applicant_choices,
-                [filter_gender, filter_location, filter_msme],
-                [applicant_select, profile_out],
-            )
-            filter_msme.change(
-                get_applicant_choices,
-                [filter_gender, filter_location, filter_msme],
-                [applicant_select, profile_out],
-            )
+            for filt in (filter_gender, filter_location, filter_msme):
+                filt.change(
+                    get_applicant_choices,
+                    filter_inputs,
+                    [applicant_select, snapshot_out, profile_out],
+                )
             applicant_select.change(
                 show_applicant_profile,
                 applicant_select,
-                [profile_out, score_hint, out_plot, out_text],
+                [snapshot_out, profile_out, score_hint, out_plot, out_text],
             )
             random_btn.click(
                 pick_random_applicant,
-                [filter_gender, filter_location, filter_msme],
-                [applicant_select, profile_out, score_hint, out_plot, out_text],
+                filter_inputs,
+                [applicant_select, snapshot_out, profile_out, score_hint, out_plot, out_text],
             )
             score_btn.click(
                 run_credit_score,
                 applicant_select,
-                [out_text, out_plot, out_explain],
+                [out_text, out_plot, out_explain, score_script],
             )
 
         with gr.TabItem("📈 Results"):
-            gr.Markdown("**Objectives 2 & 3** — LoRA vs baselines: AUC-ROC, AUC-PR, F1 (§4.4.4).")
+            gr.Markdown(
+                "**Objectives 2 & 3** — LoRA vs baselines on AUC-ROC, AUC-PR, and F1. "
+                "Higher bars are better; all metrics are on a 0–1 scale."
+            )
             comp_btn = gr.Button("View results", variant="primary")
             comp_cards = gr.HTML()
-            comp_plot = gr.Plot()
+            comp_script = gr.HTML("")
+            comp_plot = gr.Plot(label="Model comparison chart")
             comp_note = gr.Markdown()
-            comp_btn.click(model_comparison, None, [comp_plot, comp_cards, comp_note])
+            comp_btn.click(model_comparison, None, [comp_plot, comp_cards, comp_note, comp_script])
 
         with gr.TabItem("⚡ Efficiency"):
-            gr.Markdown("**Objective 3** — Trainable parameters, training time, inference latency, memory (§3.6.2).")
+            gr.Markdown(
+                "**Objective 3** — How much of the model is actually trained, and how fast is inference? "
+                "Left: parameter split. Right: runtime with labelled units."
+            )
             eff_btn = gr.Button("View efficiency", variant="primary")
-            eff_plot = gr.Plot()
+            eff_script = gr.HTML("")
+            eff_plot = gr.Plot(label="Efficiency dashboard")
             eff_note = gr.Markdown()
-            eff_btn.click(efficiency_dashboard, None, [eff_plot, eff_note])
+            eff_btn.click(efficiency_dashboard, None, [eff_plot, eff_note, eff_script])
 
         with gr.TabItem("⚖️ Fairness"):
-            gr.Markdown("**Objective 4** — Performance across gender, location, age, income quartile, MSME (§3.6.3).")
+            gr.Markdown(
+                "**Objective 4** — Separate charts per protected attribute. "
+                "Compare **AUC** (ranking quality) and **TPR** (defaults caught) across subgroups."
+            )
             fair_btn = gr.Button("View fairness", variant="primary")
+            fair_script = gr.HTML("")
+            fair_plot = gr.Plot(label="Fairness by subgroup")
             fair_note = gr.Markdown()
-            fair_plot = gr.Plot()
-            fair_btn.click(fairness_dashboard, None, [fair_plot, fair_note])
+            fair_btn.click(fairness_dashboard, None, [fair_plot, fair_note, fair_script])
 
         with gr.TabItem("🔍 Explainability"):
-            gr.Markdown("**Objective 2** — LoRA feature attribution and RF SHAP for regulators (§4.4.9).")
+            gr.Markdown(
+                "**Objective 2** — Global LoRA feature attribution (horizontal bars = easier to read). "
+                "Per-applicant drivers appear in **Live Demo**."
+            )
             exp_btn = gr.Button("View explainability", variant="primary")
+            exp_script = gr.HTML("")
+            exp_plot = gr.Plot(label="Feature attribution chart")
             exp_note = gr.Markdown()
-            exp_plot = gr.Plot()
-            exp_btn.click(explainability_tab, None, [exp_plot, exp_note])
+            exp_btn.click(explainability_tab, None, [exp_plot, exp_note, exp_script])
 
         with gr.TabItem("📊 Dataset"):
+            gr.HTML(DATASET_SCRIPT)
             gr.Markdown("**Objective 1** — Synthetic alternative data framework (§3.3).")
             ds_btn = gr.Button("View dataset", variant="primary")
             ds_text = gr.Markdown()
@@ -686,6 +970,7 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
             ds_btn.click(dataset_info, None, [ds_text, ds_table])
 
         with gr.TabItem("📜 Policy"):
+            gr.HTML(POLICY_SCRIPT)
             gr.Markdown("""
             ### Objective 5 — Policy alignment (§6.3, Appendix E)
 
