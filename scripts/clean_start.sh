@@ -22,7 +22,7 @@ echo ""
 echo "[2/6] Cleaning generated files..."
 rm -f models/baseline/*.pkl 2>/dev/null || true
 rm -f models/lora/*.pt models/lora/*.bin 2>/dev/null || true
-rm -f models/preprocessor.pkl models/dataset_name.txt 2>/dev/null || true
+rm -f models/preprocessor.pkl models/dataset_name.txt models/score_calibration.json 2>/dev/null || true
 rm -f results/metrics/*.json results/metrics/*.csv 2>/dev/null || true
 rm -f results/figures/*.png results/reports/*.html 2>/dev/null || true
 rm -f data/raw/*.csv data/raw/*.zip data/raw/*.data* data/raw/Index data/raw/german.doc 2>/dev/null || true

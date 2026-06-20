@@ -16,20 +16,29 @@ data/synthetic/*.csv
 !data/processed/.gitkeep
 !data/synthetic/.gitkeep
 
-# Models
-models/baseline/*.pkl
-models/lora/*.pt
-models/lora/*.bin
+# Models (generated at training time)
+models/*
+!models/baseline/
+!models/lora/
+models/baseline/*
 !models/baseline/.gitkeep
+models/lora/*
 !models/lora/.gitkeep
 
-# Results
-results/metrics/*.csv
-results/metrics/*.json
-results/figures/*.png
-results/reports/*.html
+# Results (generated metrics, figures, reports)
+results/metrics/*
+results/figures/*
+results/reports/*
 !results/metrics/.gitkeep
 !results/figures/.gitkeep
+!results/reports/.gitkeep
+
+# Logs
+*.log
+
+# Dissertation / office documents (local only)
+*.docx
+*.pdf
 
 # IDE
 .idea/
@@ -50,7 +59,15 @@ results/reports/*.html
 .coverage
 htmlcov/
 
+# OS
+.DS_Store
+Thumbs.db
+
+# ML caches
+.cache/
+
 # MFI Portal
-mfi_portal/data/*.db
+mfi_portal/data/*
+!mfi_portal/data/.gitkeep
 mfi_portal/frontend/node_modules/
 mfi_portal/frontend/dist/
