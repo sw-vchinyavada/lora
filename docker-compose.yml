@@ -1,0 +1,29 @@
+# LoRA Credit Scoring - One-command deployment
+services:
+  app:
+    build: .
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./results:/app/results
+    environment:
+      - GRADIO_SERVER_NAME=0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7860')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # One-shot training (run once to train models)
+  train:
+    build: .
+    command: python scripts/train.py --dataset zimbabwe_synthetic --epochs 10
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./results:/app/results
+    profiles:
+      - train

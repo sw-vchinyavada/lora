@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# Data
+data/raw/*
+data/processed/*
+data/synthetic/*.csv
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/synthetic/.gitkeep
+
+# Models
+models/baseline/*.pkl
+models/lora/*.pt
+models/lora/*.bin
+!models/baseline/.gitkeep
+!models/lora/.gitkeep
+
+# Results
+results/metrics/*.csv
+results/metrics/*.json
+results/figures/*.png
+results/reports/*.html
+!results/metrics/.gitkeep
+!results/figures/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# MFI Portal
+mfi_portal/data/*.db
+mfi_portal/frontend/node_modules/
+mfi_portal/frontend/dist/
