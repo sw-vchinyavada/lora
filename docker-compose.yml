@@ -1,5 +1,16 @@
-# LoRA Credit Scoring - One-command deployment
+# LoRA Credit Scoring — Docker Compose
+#
+# Services:
+#   app           Gradio dissertation demo     http://localhost:7860
+#   mfi-api       MFI portal REST API          http://localhost:8000
+#   mfi-frontend  MFI React UI (nginx)         http://localhost:5174
+#   train         One-shot training (profile)  docker compose --profile train run --rm train
+#
+# Quick start:  docker compose up -d --build
+# Docs:         README.md § Docker
+
 services:
+  # Gradio dissertation demo UI
   app:
     build: .
     ports:
@@ -16,6 +27,37 @@ services:
       timeout: 5s
       retries: 5
       start_period: 60s
+
+  # MFI portal API (LoRA scoring + applicant DB)
+  mfi-api:
+    build:
+      context: .
+      dockerfile: mfi_portal/backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./results:/app/results
+      - ./mfi_portal/data:/app/mfi_portal/data
+    environment:
+      - MFI_DATABASE_URL=sqlite:////app/mfi_portal/data/mfi.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # MFI portal React UI (proxies /api to mfi-api)
+  mfi-frontend:
+    build:
+      context: .
+      dockerfile: mfi_portal/frontend/Dockerfile
+    ports:
+      - "5174:5174"
+    depends_on:
+      mfi-api:
+        condition: service_healthy
 
   # One-shot training (run once to train models)
   train:

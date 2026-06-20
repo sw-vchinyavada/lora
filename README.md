@@ -9,7 +9,152 @@ Harare Institute of Technology · Supervisor: Eng A. Ndlovu
 
 ## 1. Steps to Run the Project
 
-### Clean Start (from scratch)
+Two ways to run the system:
+
+| Approach | Best for | What you get |
+|----------|----------|--------------|
+| **[Docker](#docker-recommended)** | Panel demo, Windows, minimal setup | Both frontends + API in one command |
+| **[Local (venv)](#local-setup-venv)** | Development, training tweaks | Full control; manual terminal setup |
+
+---
+
+### Docker (Recommended)
+
+Runs **both frontends** and the MFI API without installing Python or Node locally.
+
+#### Prerequisites
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) or Docker Engine + Compose (Linux)
+- ~8 GB free disk (images include PyTorch)
+- Internet on first build (downloads base images and DistilBERT weights during training)
+- **Start Docker Desktop** before running any `docker compose` command
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  docker compose up -d --build                                   │
+├─────────────────┬─────────────────────┬─────────────────────────┤
+│  app            │  mfi-frontend       │  mfi-api                │
+│  Gradio demo    │  React + nginx      │  FastAPI + LoRA scoring │
+│  :7860          │  :5174              │  :8000                  │
+│                 │  /api ──proxy──►    │  SQLite in mfi_portal/  │
+└────────┬────────┴──────────┬──────────┴──────────┬──────────────┘
+         │                   │                      │
+         └───────────────────┴──────────────────────┘
+                    shared host volumes
+              ./models  ./results  ./data  ./mfi_portal/data
+```
+
+| Service | Container | Host URL | Role |
+|---------|-----------|----------|------|
+| `app` | Gradio | http://localhost:7860 | Dissertation demo — fairness, explainability, live scoring |
+| `mfi-frontend` | nginx + React | http://localhost:5174 | MFI office portal — applicants, score inquiries, reports |
+| `mfi-api` | FastAPI | http://localhost:8000/docs | REST API for the portal; loads LoRA from `./models` |
+| `train` | one-shot job | — | Trains models; not started by default (uses `--profile train`) |
+
+#### First-time setup
+
+From the project root (`lora/`):
+
+```bash
+# 1. Train models (writes to ./models and ./results on your machine)
+docker compose --profile train run --rm train
+
+# 2. Build images and start all three services
+docker compose up -d --build
+```
+
+**Windows (PowerShell)** — same commands; ensure Docker Desktop is running.
+
+*Training takes ~5–15 minutes on CPU depending on hardware. The first `docker compose build` may take 10–20 minutes while PyTorch and dependencies download.*
+
+#### Verify services are up
+
+```bash
+docker compose ps
+```
+
+All three services should show `running` (and `healthy` once ready). Then open:
+
+| URL | Login / notes |
+|-----|----------------|
+| http://localhost:7860 | Gradio demo — no login |
+| http://localhost:5174 | MFI portal — `admin` / `admin123` or `officer` / `officer123` |
+| http://localhost:8000/docs | Swagger API reference |
+
+#### Day-to-day commands
+
+```bash
+# Start (after first build)
+docker compose up -d
+
+# Stop all services
+docker compose down
+
+# View logs (all services, follow mode)
+docker compose logs -f
+
+# Logs for one service
+docker compose logs -f app
+docker compose logs -f mfi-api
+docker compose logs -f mfi-frontend
+
+# Rebuild after code changes
+docker compose up -d --build
+
+# Rebuild a single service
+docker compose up -d --build mfi-frontend
+```
+
+#### Start individual services
+
+```bash
+docker compose up -d app                    # Gradio demo only
+docker compose up -d mfi-api mfi-frontend # MFI portal only (API + UI)
+```
+
+The MFI frontend depends on `mfi-api` being healthy; start the API first if running them separately.
+
+#### Retrain models (Docker)
+
+```bash
+docker compose --profile train run --rm train
+
+# Optional: override training args (50K samples, methodology run)
+docker compose --profile train run --rm train \
+  python scripts/train.py --dataset zimbabwe_synthetic --n-samples 50000 --epochs 15
+```
+
+Restart services after retraining so they pick up new weights:
+
+```bash
+docker compose restart app mfi-api
+```
+
+#### Data persistence
+
+Docker mounts host folders into containers. Nothing is lost when you `docker compose down`:
+
+| Host path | Used by | Contents |
+|-----------|---------|----------|
+| `./models/` | `app`, `mfi-api`, `train` | LoRA weights, preprocessor |
+| `./results/` | `app`, `mfi-api`, `train` | Metrics, fairness, feature importance |
+| `./data/` | `app`, `train` | Generated datasets |
+| `./mfi_portal/data/` | `mfi-api` | SQLite DB (`mfi.db`), applicants, score history |
+
+#### Panel demo flow (both UIs)
+
+1. **Gradio** (http://localhost:7860) — walk through Overview → Live Demo → Results → Fairness → Explainability (see [§2 Demo Guide](#2-demo-guide--meeting-each-objective)).
+2. **MFI portal** (http://localhost:5174) — log in as officer, add an applicant, run a score inquiry, show dashboard and reports.
+
+---
+
+### Local setup (venv)
+
+#### Clean Start (from scratch)
+
+*Linux/macOS only* — on Windows, follow Steps 1–4 below manually (remove `venv`, `models/`, and `results/` if resetting).
 
 ```bash
 cd /path/to/lora-project
@@ -29,23 +174,47 @@ Then run each system in a **separate terminal** (see steps below).
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.10 or higher ([python.org](https://www.python.org/downloads/); on Windows, enable **Add python.exe to PATH** during install)
 - ~4 GB disk space
 - Internet connection (first run: download DistilBERT)
 
+> **Windows note:** `python3` often points to a Microsoft Store placeholder and fails with *“Python was not found”*. Use `python` or `py` instead (see Step 1). To disable the stub: **Settings → Apps → Advanced app settings → App execution aliases** — turn off `python.exe` and `python3.exe`.
+
 ### Step 1: Create Virtual Environment
+
+**Linux / macOS**
 
 ```bash
 cd /path/to/lora-project
 
-# Create a fresh venv (if existing venv is broken, remove it first: rm -rf venv)
+# Create a fresh venv (if broken, remove first: rm -rf venv)
 python3 -m venv venv
 
-# Activate (Linux/macOS)
+# Activate
 source venv/bin/activate
+```
 
-# Activate (Windows)
-# venv\Scripts\activate
+**Windows (PowerShell)**
+
+```powershell
+cd C:\path\to\lora-project
+
+# Create a fresh venv (if broken, remove first: Remove-Item -Recurse -Force venv)
+python -m venv venv
+# Or pin a version: py -3.11 -m venv venv
+
+# Activate
+.\venv\Scripts\Activate.ps1
+```
+
+If activation is blocked by execution policy, run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+
+**Windows (Command Prompt)**
+
+```cmd
+cd C:\path\to\lora-project
+python -m venv venv
+venv\Scripts\activate.bat
 ```
 
 ### Step 2: Install Dependencies
@@ -76,28 +245,18 @@ python -m app.main
 
 **Open http://localhost:7860** in your browser.
 
-### Docker (Alternative)
-
-```bash
-# Train
-docker compose --profile train run --rm train
-
-# Launch UI
-docker compose up -d app
-```
-
-Open **http://localhost:7860**.
+For the MFI office portal without Docker, see [Step 5](#step-5-optional-mfi-portal--office-ui) or `mfi_portal/README.md`.
 
 ### Step 5 (Optional): MFI Portal — Office UI
 
 For microfinance staff to check credit scores in the office:
 
 ```bash
-# Activate venv first
-source venv/bin/activate
+# Activate venv first (Linux/macOS: source venv/bin/activate)
+# Windows PowerShell: .\venv\Scripts\Activate.ps1
 
 # Install MFI portal deps
-pip install sqlalchemy python-jose[cryptography] bcrypt
+pip install sqlalchemy python-jose[cryptography] passlib[bcrypt]
 
 # Terminal 1: Start API (port 8000)
 cd mfi_portal/backend && uvicorn app.main:app --reload
@@ -164,15 +323,22 @@ Use this flow when presenting to the dissertation panel. Each tab demonstrates o
 
 ```
 lora-project/
-├── README.md              # This file
-├── app/main.py            # Demo UI
-├── scripts/train.py       # Training pipeline
+├── README.md                 # This file
+├── docker-compose.yml        # app + mfi-api + mfi-frontend + train profile
+├── Dockerfile                # Gradio demo image
+├── app/main.py               # Demo UI
+├── scripts/train.py          # Training pipeline
+├── mfi_portal/
+│   ├── backend/              # FastAPI (Dockerfile)
+│   ├── frontend/               # React + Vite (Dockerfile, nginx.conf)
+│   └── data/                 # SQLite DB (runtime, Docker volume)
 ├── src/
-│   ├── data/              # Loader, preprocessor, zimbabwe_synthetic
-│   ├── models/            # LR, RF, XGB, LoRA
-│   ├── training/          # LoRA trainer
-│   └── evaluation/        # Fairness, explainability
-├── results/metrics/       # training_results, fairness_results, feature_importance
+│   ├── data/                 # Loader, preprocessor, zimbabwe_synthetic
+│   ├── models/               # LR, RF, XGB, LoRA
+│   ├── training/             # LoRA trainer
+│   └── evaluation/           # Fairness, explainability
+├── models/                   # Trained weights (generated)
+├── results/metrics/          # training_results, fairness_results, feature_importance
 └── requirements.txt
 ```
 
@@ -180,13 +346,33 @@ lora-project/
 
 ## 6. Troubleshooting
 
+### Local (venv)
+
 | Issue | Fix |
 |-------|-----|
-| `venv/bin/pip: cannot execute` | Recreate venv: `rm -rf venv && python3 -m venv venv` |
+| `Python was not found` (Windows) | Use `python -m venv venv` or `py -3.11 -m venv venv`, not `python3`. Install from [python.org](https://www.python.org/downloads/) if `python` is also missing. |
+| `venv/bin/pip: cannot execute` (Linux/macOS) | Recreate venv: `rm -rf venv && python3 -m venv venv` |
+| Broken venv (Windows) | `Remove-Item -Recurse -Force venv` then `python -m venv venv` |
+| `Activate.ps1` blocked (Windows) | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then activate again |
 | `ModuleNotFoundError: gradio` | `pip install -r requirements.txt` (with venv active) |
 | `ImportError: get_shap_values` | Ensure latest `src/evaluation/__init__.py` exports `get_shap_values` |
-| UI shows "Train first" | Run `python scripts/train.py --dataset zimbabwe_synthetic` |
+| UI shows "Train first" | Run `python scripts/train.py --dataset zimbabwe_synthetic` or see Docker training below |
 | Port 7860 in use | `python -m app.main --server-port 7861` |
+
+### Docker
+
+| Issue | Fix |
+|-------|-----|
+| `failed to connect to the docker API` / `dockerDesktopLinuxEngine` | Start **Docker Desktop** and wait until it reports "Running", then retry |
+| `docker compose` not found | Install Docker Desktop (includes Compose v2) or use `docker-compose` on older installs |
+| Gradio shows "Train first" | Run `docker compose --profile train run --rm train`, then `docker compose restart app` |
+| MFI portal: score unavailable | Train first; confirm `./models/lora/best_model.pt` exists on the host |
+| `mfi-frontend` stuck on "Starting" | Check API health: `docker compose logs mfi-api`. API must pass healthcheck before UI starts |
+| Port already in use (7860, 5174, 8000) | Stop conflicting process or change the host port in `docker-compose.yml` (e.g. `"7861:7860"`) |
+| Slow first build | Normal — PyTorch and transformers are large. Subsequent builds use cache |
+| Changes not reflected | Rebuild: `docker compose up -d --build` (or rebuild the specific service) |
+| Reset MFI applicant data | Stop containers, delete `mfi_portal/data/mfi.db`, run `docker compose up -d mfi-api` (re-seeds admin users) |
+| View container errors | `docker compose logs -f <service>` where `<service>` is `app`, `mfi-api`, or `mfi-frontend` |
 
 ---
 
