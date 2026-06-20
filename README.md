@@ -366,7 +366,7 @@ lora-project/
 | `failed to connect to the docker API` / `dockerDesktopLinuxEngine` | Start **Docker Desktop** and wait until it reports "Running", then retry |
 | `docker compose` not found | Install Docker Desktop (includes Compose v2) or use `docker-compose` on older installs |
 | Gradio shows "Train first" | Run `docker compose --profile train run --rm train`, then `docker compose restart app` |
-| MFI portal: score unavailable | Train first; confirm `./models/lora/best_model.pt` exists on the host |
+| Score always ~570–580 for every applicant | Old model/preprocessor mismatch. **Retrain:** `python scripts/train.py --dataset zimbabwe_synthetic` then restart the app. Scores should spread across ~400–800. |
 | `mfi-frontend` stuck on "Starting" | Check API health: `docker compose logs mfi-api`. API must pass healthcheck before UI starts |
 | Port already in use (7860, 5174, 8000) | Stop conflicting process or change the host port in `docker-compose.yml` (e.g. `"7861:7860"`) |
 | Slow first build | Normal — PyTorch and transformers are large. Subsequent builds use cache |

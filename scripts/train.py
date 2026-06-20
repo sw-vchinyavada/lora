@@ -167,7 +167,7 @@ def main():
     print("=" * 60)
     for name, m in results.items():
         print(f"  {name:22s} AUC-ROC: {m['auc_roc']:.3f}  AUC-PR: {m['auc_pr']:.3f}  F1: {m['f1']:.3f}  Prec: {m['precision']:.3f}  Rec: {m['recall']:.3f}")
-    print(f"\nModels → {out_dir} | results/metrics/")
+    print(f"\nModels -> {out_dir} | results/metrics/")
 
 
 if __name__ == "__main__":
