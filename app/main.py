@@ -216,20 +216,20 @@ def get_applicant_choices(
         )
     except Exception as e:
         return (
-            gr.Dropdown(choices=[], value=None, label="Choose applicant"),
+            gr.update(choices=[], value=None, label="Choose applicant"),
             empty_snapshot(f"Could not load dataset: {e}"),
             '<div class="profile-card"><p style="margin:0;color:#64748b;">Dataset unavailable.</p></div>',
         )
 
     if not choices:
         return (
-            gr.Dropdown(choices=[], value=None, label="Choose applicant"),
+            gr.update(choices=[], value=None, label="Choose applicant"),
             snapshot,
             profile,
         )
 
     return (
-        gr.Dropdown(choices=choices, value=first_id, label="Choose applicant", filterable=True),
+        gr.update(choices=choices, value=first_id, label="Choose applicant", filterable=True),
         snapshot,
         profile,
     )
@@ -244,6 +244,7 @@ def apply_demo_scenario(scenario_key: str):
 
 def show_applicant_profile(applicant_id: str):
     """Load snapshot and full profile — no model inference yet."""
+    cleared = ("", "")
     if not applicant_id:
         return (
             empty_snapshot(),
@@ -251,6 +252,7 @@ def show_applicant_profile(applicant_id: str):
             "Select an applicant, review the preview, then run the credit check.",
             None,
             "",
+            *cleared,
         )
     try:
         df = _load_demo_dataframe()
@@ -263,6 +265,7 @@ def show_applicant_profile(applicant_id: str):
             "Select an applicant to enable scoring.",
             None,
             "",
+            *cleared,
         )
     return (
         build_applicant_snapshot(row, idx),
@@ -270,6 +273,7 @@ def show_applicant_profile(applicant_id: str):
         "Preview loaded. Click **Check credit score** when ready.",
         None,
         "",
+        *cleared,
     )
 
 
@@ -285,22 +289,26 @@ def pick_random_applicant(
         df = _load_demo_dataframe()
     except Exception as e:
         return (
-            None,
+            gr.update(choices=[], value=None, label="Choose applicant"),
             empty_snapshot(str(e)),
             '<div class="profile-card"><p style="margin:0;color:#64748b;">Dataset unavailable.</p></div>',
             "Select an applicant to enable scoring.",
             None,
+            "",
+            "",
             "",
         )
 
     indices = filter_applicant_indices(df, gender, location, msme, extra)
     if len(indices) == 0:
         return (
-            None,
+            gr.update(choices=[], value=None, label="Choose applicant"),
             empty_snapshot("No applicants match."),
             '<div class="profile-card"><p style="margin:0;color:#64748b;">No applicants match these filters.</p></div>',
             "Select an applicant to enable scoring.",
             None,
+            "",
+            "",
             "",
         )
 
@@ -308,11 +316,13 @@ def pick_random_applicant(
     choices = [(applicant_choice_label(df.loc[i], i), str(i)) for i in indices[:400]]
     row = df.loc[idx]
     return (
-        gr.Dropdown(choices=choices, value=str(idx), label="Choose applicant", filterable=True),
+        gr.update(choices=choices, value=str(idx), label="Choose applicant", filterable=True),
         build_applicant_snapshot(row, idx),
         build_profile_html(row, idx),
         "Preview loaded. Click **Check credit score** when ready.",
         None,
+        "",
+        "",
         "",
     )
 
@@ -742,12 +752,7 @@ def dataset_info():
     pct = 100 * defs / n if n else 0
 
     desc = "**Zimbabwe alternative data** (synthetic §3.3): mobile money, utility payments, digital commerce, demographics — **Objective 1**." if dn == "zimbabwe_synthetic" else f"**{dn}** — validation benchmark (§3.3.5)."
-    script = DATASET_SCRIPT.replace(
-        "The table below shows sample rows.",
-        f"The table below shows sample rows from <strong>{n:,}</strong> synthetic applicants, "
-        f"including <strong>{defs:,}</strong> simulated defaults ({pct:.1f}%).",
-    )
-    summary = f"{desc}\n\n**{n:,}** samples  ·  **{defs:,}** defaults ({pct:.1f}%)  ·  **{len(df.columns)-1}** features\n\n{script}"
+    summary = f"{desc}\n\n**{n:,}** samples  ·  **{defs:,}** defaults ({pct:.1f}%)  ·  **{len(df.columns)-1}** features"
     table_html = df.head(40).to_html(classes="table-auto", index=False)
     table = f'<div style="overflow-x:auto; overflow-y:auto; max-height:400px; max-width:100%;">{table_html}</div>'
     return summary, table
@@ -789,16 +794,13 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
     </div>
     """)
 
-    with gr.Accordion("🎤 Presentation scripts — read aloud while practising", open=True):
-        gr.Markdown(
-            "Each tab includes a **yellow script box** with wording you can read during the panel demo. "
-            "Chart tabs also generate a **dynamic script** after you click the view button, using your trained model numbers."
-        )
+    with gr.Accordion("Panel presentation flow (optional)", open=False):
         gr.Markdown(DEMO_FLOW)
 
     with gr.Tabs() as tabs:
         with gr.TabItem("📋 Overview"):
-            gr.HTML(OVERVIEW_SCRIPT)
+            with gr.Accordion("Show presentation script", open=False):
+                gr.HTML(OVERVIEW_SCRIPT)
             gr.Markdown("""
             ### Research aim (§1.5)
             Develop and evaluate a **LoRA-enhanced alternative data credit scoring system** that expands financial inclusion in Zimbabwe while maintaining computational efficiency, fairness, and NDS alignment.
@@ -825,7 +827,8 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
             """)
 
         with gr.TabItem("🔮 Live Demo"):
-            gr.HTML(LIVE_DEMO_SCRIPT)
+            with gr.Accordion("Show presentation script", open=False):
+                gr.HTML(LIVE_DEMO_SCRIPT)
             gr.Markdown(
                 "Walk through a realistic credit inquiry: **pick a scenario → choose an applicant → preview → run the LoRA score**."
             )
@@ -880,7 +883,8 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
                     out_explain = gr.Markdown()
                 with gr.Column(scale=1):
                     out_plot = gr.Plot(label="Credit score gauge")
-            score_script = gr.HTML("")
+            with gr.Accordion("Show presentation script for this score", open=False):
+                score_script = gr.HTML("")
 
             filter_inputs = [filter_gender, filter_location, filter_msme, scenario_select]
 
@@ -903,12 +907,12 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
             applicant_select.change(
                 show_applicant_profile,
                 applicant_select,
-                [snapshot_out, profile_out, score_hint, out_plot, out_text],
+                [snapshot_out, profile_out, score_hint, out_plot, out_text, out_explain, score_script],
             )
             random_btn.click(
                 pick_random_applicant,
                 filter_inputs,
-                [applicant_select, snapshot_out, profile_out, score_hint, out_plot, out_text],
+                [applicant_select, snapshot_out, profile_out, score_hint, out_plot, out_text, out_explain, score_script],
             )
             score_btn.click(
                 run_credit_score,
@@ -923,9 +927,10 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
             )
             comp_btn = gr.Button("View results", variant="primary")
             comp_cards = gr.HTML()
-            comp_script = gr.HTML("")
             comp_plot = gr.Plot(label="Model comparison chart")
             comp_note = gr.Markdown()
+            with gr.Accordion("Show presentation script", open=False):
+                comp_script = gr.HTML("")
             comp_btn.click(model_comparison, None, [comp_plot, comp_cards, comp_note, comp_script])
 
         with gr.TabItem("⚡ Efficiency"):
@@ -934,9 +939,10 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
                 "Left: parameter split. Right: runtime with labelled units."
             )
             eff_btn = gr.Button("View efficiency", variant="primary")
-            eff_script = gr.HTML("")
             eff_plot = gr.Plot(label="Efficiency dashboard")
             eff_note = gr.Markdown()
+            with gr.Accordion("Show presentation script", open=False):
+                eff_script = gr.HTML("")
             eff_btn.click(efficiency_dashboard, None, [eff_plot, eff_note, eff_script])
 
         with gr.TabItem("⚖️ Fairness"):
@@ -945,9 +951,10 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
                 "Compare **AUC** (ranking quality) and **TPR** (defaults caught) across subgroups."
             )
             fair_btn = gr.Button("View fairness", variant="primary")
-            fair_script = gr.HTML("")
             fair_plot = gr.Plot(label="Fairness by subgroup")
             fair_note = gr.Markdown()
+            with gr.Accordion("Show presentation script", open=False):
+                fair_script = gr.HTML("")
             fair_btn.click(fairness_dashboard, None, [fair_plot, fair_note, fair_script])
 
         with gr.TabItem("🔍 Explainability"):
@@ -956,13 +963,15 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
                 "Per-applicant drivers appear in **Live Demo**."
             )
             exp_btn = gr.Button("View explainability", variant="primary")
-            exp_script = gr.HTML("")
             exp_plot = gr.Plot(label="Feature attribution chart")
             exp_note = gr.Markdown()
+            with gr.Accordion("Show presentation script", open=False):
+                exp_script = gr.HTML("")
             exp_btn.click(explainability_tab, None, [exp_plot, exp_note, exp_script])
 
         with gr.TabItem("📊 Dataset"):
-            gr.HTML(DATASET_SCRIPT)
+            with gr.Accordion("Show presentation script", open=False):
+                gr.HTML(DATASET_SCRIPT)
             gr.Markdown("**Objective 1** — Synthetic alternative data framework (§3.3).")
             ds_btn = gr.Button("View dataset", variant="primary")
             ds_text = gr.Markdown()
@@ -970,7 +979,8 @@ with gr.Blocks(title="LoRA Credit Scoring | MSc Dissertation") as demo:
             ds_btn.click(dataset_info, None, [ds_text, ds_table])
 
         with gr.TabItem("📜 Policy"):
-            gr.HTML(POLICY_SCRIPT)
+            with gr.Accordion("Show presentation script", open=False):
+                gr.HTML(POLICY_SCRIPT)
             gr.Markdown("""
             ### Objective 5 — Policy alignment (§6.3, Appendix E)
 
